@@ -325,7 +325,8 @@ const state = {
   listFilters: {
     site: "",
     worker: "",
-    date: "",
+    dateFrom: "",
+    dateTo: "",
     order: "newest",
   },
   currentConfig: null,
@@ -384,12 +385,6 @@ function dateValue(value) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function dateKey(value) {
-  const timestamp = dateValue(value);
-  if (!timestamp) return "";
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
 function uniqueValues(rows, key) {
   return [
     ...new Set(
@@ -402,12 +397,19 @@ function uniqueValues(rows, key) {
 
 function applyListFilters(rows, config) {
   if (config.filterMode !== "hsa") return [...rows];
-  const { site, worker, date, order } = state.listFilters;
+  const { site, worker, dateFrom, dateTo, order } = state.listFilters;
+  const fromValue = dateValue(dateFrom);
+  const toValue = dateValue(dateTo);
   const filtered = rows.filter(
-    (row) =>
-      (!site || row.site === site) &&
-      (!worker || row.worker === worker) &&
-      (!date || dateKey(row.submitted_date) === date),
+    (row) => {
+      const submittedValue = dateValue(row.submitted_date);
+      return (
+        (!site || row.site === site) &&
+        (!worker || row.worker === worker) &&
+        (!fromValue || submittedValue >= fromValue) &&
+        (!toValue || submittedValue <= toValue)
+      );
+    },
   );
   return filtered.sort((left, right) => {
     const difference = dateValue(left.created_at) - dateValue(right.created_at);
@@ -628,8 +630,14 @@ async function renderList(config) {
             </select>
           </label>
           <label>
-            <span>Submitted date</span>
-            <input id="filter-date" type="date" value="${escapeHtml(state.listFilters.date)}" />
+            <span>Submitted from</span>
+            <input id="filter-dateFrom" type="date" value="${escapeHtml(state.listFilters.dateFrom)}"
+                   max="${escapeHtml(state.listFilters.dateTo)}" />
+          </label>
+          <label>
+            <span>Submitted to</span>
+            <input id="filter-dateTo" type="date" value="${escapeHtml(state.listFilters.dateTo)}"
+                   min="${escapeHtml(state.listFilters.dateFrom)}" />
           </label>
           <label>
             <span>Creation order</span>
@@ -698,7 +706,7 @@ function bindTableEvents(config) {
       await renderList(config);
     }, 250);
   });
-  ["site", "worker", "date", "order"].forEach((filterName) => {
+  ["site", "worker", "dateFrom", "dateTo", "order"].forEach((filterName) => {
     document.querySelector(`#filter-${filterName}`)?.addEventListener("change", async (event) => {
       state.listFilters[filterName] = event.target.value;
       state.page = 1;
@@ -706,7 +714,13 @@ function bindTableEvents(config) {
     });
   });
   document.querySelector("#clear-filters")?.addEventListener("click", async () => {
-    state.listFilters = { site: "", worker: "", date: "", order: "newest" };
+    state.listFilters = {
+      site: "",
+      worker: "",
+      dateFrom: "",
+      dateTo: "",
+      order: "newest",
+    };
     state.page = 1;
     await renderList(config);
   });
@@ -1327,7 +1341,13 @@ async function route() {
     } else if (LIST_ROUTES[path]) {
       state.search = "";
       state.page = 1;
-      state.listFilters = { site: "", worker: "", date: "", order: "newest" };
+      state.listFilters = {
+        site: "",
+        worker: "",
+        dateFrom: "",
+        dateTo: "",
+        order: "newest",
+      };
       await renderList(LIST_ROUTES[path]);
     } else if (path === "/archive") {
       await renderArchive();

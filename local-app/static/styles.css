@@ -1727,7 +1727,7 @@ body {
 
 .advanced-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr)) auto;
+  grid-template-columns: repeat(5, minmax(130px, 1fr)) auto;
   gap: 12px;
   align-items: end;
   margin: -2px 0 18px;
