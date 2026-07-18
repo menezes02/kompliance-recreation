@@ -251,7 +251,7 @@ function hsaConfig(resource, title) {
       ["worker", "Worker Name"],
       ["worker_email", "Worker Email"],
       ["submitted_date", "Submitted Date"],
-      ["archive_path", "Archived PDF"],
+      ["archive_path", "Archived PDF", "archive"],
     ],
     fields: [
       { name: "subcontractor", label: "Subcontractor" },
@@ -357,11 +357,33 @@ function formatDate(value) {
   }).format(date);
 }
 
+function archiveHref(value) {
+  const safePath = String(value || "")
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return safePath ? `/archive/${safePath}` : "";
+}
+
 function renderCell(value, format) {
   if (format === "date") return formatDate(value);
   if (format === "status") {
     const status = String(value || "Pending");
     return `<span class="status ${escapeHtml(status.toLowerCase().replaceAll(" ", "-"))}">${escapeHtml(status)}</span>`;
+  }
+  if (format === "archive") {
+    const href = archiveHref(value);
+    if (!href) return "—";
+    const fileName = String(value).replaceAll("\\", "/").split("/").pop();
+    return `
+      <a class="document-link" href="${escapeHtml(href)}" target="_blank" rel="noopener"
+         title="View ${escapeHtml(fileName)}">
+        <span aria-hidden="true">↗</span>
+        ${escapeHtml(fileName)}
+      </a>
+    `;
   }
   if (!value) return "—";
   if (String(value).includes("/") && String(value).includes(".")) {
@@ -490,12 +512,21 @@ async function renderList(config) {
           const cells = config.columns
             .map(([key, , format]) => `<td>${renderCell(row[key], format)}</td>`)
             .join("");
+          const viewAction = row.archive_path
+            ? `
+              <a class="button-icon view-document" href="${escapeHtml(archiveHref(row.archive_path))}"
+                 target="_blank" rel="noopener" title="View PDF" aria-label="View archived PDF">
+                View
+              </a>
+            `
+            : "";
           return `
             <tr>
               <td>${start + index + 1}</td>
               ${cells}
               <td>
                 <div class="actions">
+                  ${viewAction}
                   <button class="button-icon" data-edit="${row.id}" title="Edit">✎</button>
                   <button class="button-icon danger" data-delete="${row.id}" title="Delete">⌫</button>
                 </div>

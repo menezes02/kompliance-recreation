@@ -1822,6 +1822,50 @@ body {
   background: #fff1f2;
 }
 
+.button-icon.view-document {
+  display: inline-flex;
+  width: auto;
+  min-width: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 11px;
+  color: #087a5b;
+  background: #e9f8f3;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.button-icon.view-document:hover {
+  color: white;
+  background: var(--green);
+}
+
+.document-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #087a5b;
+  font-size: 12px;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.document-link span {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 7px;
+  background: #e9f8f3;
+  font-size: 12px;
+}
+
+.document-link:hover {
+  color: var(--green);
+}
+
 .status {
   padding: 5px 8px;
   border-radius: 999px;
