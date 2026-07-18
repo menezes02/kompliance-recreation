@@ -514,7 +514,8 @@ function renderCell(value, format) {
     const fileName = String(value).replaceAll("\\", "/").split("/").pop();
     return `
       <a class="document-link" href="${escapeHtml(href)}" target="_blank" rel="noopener"
-         title="View ${escapeHtml(fileName)}">
+         data-pdf-preview data-pdf-name="${escapeHtml(fileName)}"
+         title="Preview ${escapeHtml(fileName)}">
         <span aria-hidden="true">↗</span>
         ${escapeHtml(fileName)}
       </a>
@@ -525,6 +526,60 @@ function renderCell(value, format) {
     return escapeHtml(value);
   }
   return escapeHtml(value);
+}
+
+function openPdfPreview(href, fileName) {
+  const safeHref = escapeHtml(href);
+  const safeName = escapeHtml(fileName || "Archived document.pdf");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop pdf-preview-backdrop">
+      <section class="pdf-preview-modal" role="dialog" aria-modal="true" aria-labelledby="pdf-preview-title">
+        <header class="pdf-preview-header">
+          <div class="pdf-preview-title">
+            <span class="pdf-badge">PDF</span>
+            <div>
+              <small>Archived compliance document</small>
+              <h2 id="pdf-preview-title">${safeName}</h2>
+            </div>
+          </div>
+          <div class="pdf-preview-actions">
+            <a class="button button-secondary" href="${safeHref}" target="_blank" rel="noopener">
+              Open in new tab
+            </a>
+            <a class="button button-primary" href="${safeHref}" download="${safeName}">
+              Download PDF
+            </a>
+            <button class="pdf-preview-close" type="button" aria-label="Close PDF preview">×</button>
+          </div>
+        </header>
+        <div class="pdf-preview-body">
+          <div class="pdf-preview-loading">
+            <span></span>
+            Loading document preview…
+          </div>
+          <iframe class="pdf-preview-frame" src="${safeHref}#view=FitH&toolbar=1"
+                  title="PDF preview: ${safeName}"></iframe>
+          <p class="pdf-preview-fallback">
+            If the document does not appear,
+            <a href="${safeHref}" target="_blank" rel="noopener">open it in a new tab</a>.
+          </p>
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".pdf-preview-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("pdf-preview-backdrop")) close();
+  });
+  modalRoot.querySelector(".pdf-preview-frame").addEventListener("load", () => {
+    modalRoot.querySelector(".pdf-preview-body")?.classList.add("loaded");
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
 }
 
 function setLoading(visible) {
@@ -654,8 +709,10 @@ async function renderList(config) {
           const viewAction = row.archive_path
             ? `
               <a class="button-icon view-document" href="${escapeHtml(archiveHref(row.archive_path))}"
-                 target="_blank" rel="noopener" title="View PDF" aria-label="View archived PDF">
-                View
+                 target="_blank" rel="noopener" data-pdf-preview
+                 data-pdf-name="${escapeHtml(String(row.archive_path).replaceAll("\\", "/").split("/").pop())}"
+                 title="Preview PDF" aria-label="Preview archived PDF">
+                Preview
               </a>
             `
             : "";
@@ -776,6 +833,12 @@ async function renderList(config) {
 
 function bindTableEvents(config) {
   document.querySelector("#add-record")?.addEventListener("click", () => openRecordModal(config));
+  document.querySelectorAll("[data-pdf-preview]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      openPdfPreview(link.getAttribute("href"), link.dataset.pdfName);
+    });
+  });
   document.querySelector("#page-size")?.addEventListener("change", async (event) => {
     state.pageSize = Number(event.target.value);
     state.page = 1;
@@ -1567,6 +1630,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeSidebar();
     document.querySelector("#account-dropdown")?.classList.remove("open");
+    if (modalRoot.innerHTML) {
+      modalRoot.innerHTML = "";
+      document.body.classList.remove("modal-open");
+    }
   }
 });
 
