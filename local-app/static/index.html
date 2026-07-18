@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07365c" />
+    <title>Kompliance Local</title>
+    <link rel="icon" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/styles.css?v=7" />
+  </head>
+  <body>
+    <div id="loading" class="loading-screen" aria-live="polite">
+      <div class="loading-mark"><span></span><span></span><span></span></div>
+      <strong>Preparing your workspace</strong>
+    </div>
+
+    <div class="app-layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+          <a class="brand" href="/" data-route>
+            <img src="/archive/static-assets/logo.svg" alt="Kompliance" />
+          </a>
+          <button class="sidebar-close" id="sidebar-close" aria-label="Close navigation">×</button>
+        </div>
+
+        <div class="sidebar-context">
+          <span class="context-eyebrow">Safety workspace</span>
+          <strong>Kingscroft Developments</strong>
+          <span class="live-indicator"><i></i> Production snapshot</span>
+        </div>
+
+        <nav class="main-nav" id="main-nav" aria-label="Primary">
+          <a href="/" data-route><span class="nav-icon">◆</span><span>Overview</span></a>
+
+          <div class="nav-group">
+            <button class="nav-trigger"><span class="nav-icon">♙</span><span>Workforce</span><span class="nav-chevron">⌄</span></button>
+            <div class="nav-menu">
+              <a href="/workers" data-route>Workers</a>
+              <a href="/sites" data-route>Sites</a>
+              <a href="/workers-roles" data-route>Roles</a>
+              <a href="/subcontractor" data-route>Subcontractors</a>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <button class="nav-trigger"><span class="nav-icon">▤</span><span>Forms</span><span class="nav-chevron">⌄</span></button>
+            <div class="nav-menu">
+              <a href="/forms" data-route>Form builder</a>
+              <a href="/form/distribution" data-route>Distributions</a>
+              <a href="/inductions" data-route>Inductions</a>
+            </div>
+          </div>
+
+          <a href="/training" data-route><span class="nav-icon">✓</span><span>Training</span></a>
+          <a href="/appliances" data-route><span class="nav-icon">◇</span><span>Assets</span></a>
+
+          <div class="nav-group">
+            <button class="nav-trigger"><span class="nav-icon">▦</span><span>Compliance forms</span><span class="nav-chevron">⌄</span></button>
+            <div class="nav-menu nav-menu-wide">
+              <a href="/ga1" data-route>GA1 Forms</a>
+              <a href="/ga2/form" data-route>GA2 Forms</a>
+              <a href="/ga3/form" data-route>GA3 Forms</a>
+              <a href="/ga3scaffold/form" data-route>Scaffold Inspections</a>
+              <a href="/af3/form" data-route>AF3 Forms</a>
+              <a href="/handover/form" data-route>Handover Certificates</a>
+              <a href="/ga2_manual/form" data-route>GA2 Manual Forms</a>
+              <a href="/ga3_manual/form" data-route>GA3 Manual Forms</a>
+              <a href="/risk_assessment" data-route>Risk Assessments</a>
+            </div>
+          </div>
+
+          <a href="/document" data-route><span class="nav-icon">▱</span><span>Documents</span></a>
+          <a href="/archive" data-route><span class="nav-icon">◴</span><span>Source archive</span></a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span class="secure-mark">✓</span>
+          <div><strong>Secure clone</strong><span>Production is read-only</span></div>
+        </div>
+      </aside>
+
+      <button class="nav-overlay" id="nav-overlay" aria-label="Close navigation"></button>
+
+      <div class="workspace">
+        <header class="workspace-header">
+          <div class="workspace-heading">
+            <button class="menu-toggle" id="menu-toggle" aria-label="Open navigation">☰</button>
+            <div>
+              <span class="workspace-eyebrow">Kompliance</span>
+              <strong>Health &amp; Safety Operations</strong>
+            </div>
+          </div>
+
+          <div class="header-actions">
+            <a class="header-help" href="/contact-us" data-route>Help</a>
+            <div class="account-menu">
+              <button class="account-trigger" id="account-trigger">
+                <span class="avatar">K</span>
+                <span class="account-copy"><strong>Kingscroft</strong><small>Administrator</small></span>
+                <span class="account-chevron">⌄</span>
+              </button>
+              <div class="account-dropdown" id="account-dropdown">
+                <a href="/company-profile" data-route>Company profile</a>
+                <a href="/change-password" data-route>Security settings</a>
+                <a href="/contact-us" data-route>Contact support</a>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <main id="app" class="app-shell" tabindex="-1"></main>
+        <footer class="footer"><span id="year"></span> © Kompliance workspace · Secure customer-data clone</footer>
+      </div>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+    <script src="/static/app.js?v=7" defer></script>
+  </body>
+</html>

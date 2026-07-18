@@ -1,0 +1,149 @@
+{
+  "captured_at": "2026-07-18",
+  "sanitization": {
+    "production_writes": false,
+    "credentials_or_tokens_retained": false,
+    "embedded_images_retained": false,
+    "note": "The seven production examples share one safety-induction pattern. Embedded images were counted but omitted; customer-specific rich text was reduced to structural headings and character counts."
+  },
+  "shared_content_pages": [
+    {"index": 3, "heading": "Site Procedures and Requirements", "character_count": 447, "embedded_image_count": 1},
+    {"index": 4, "heading": "PPE – Personal Protective Equipment", "character_count": 470, "embedded_image_count": 1},
+    {"index": 5, "heading": "Traffic Management", "character_count": 1000, "embedded_image_count": 1},
+    {"index": 6, "heading": "Documentation Required", "character_count": 778, "embedded_image_count": 1},
+    {
+      "index": 7,
+      "blocks": [
+        {"heading": "WORK AT HEIGHTS", "character_count": 604, "embedded_image_count": 1},
+        {"heading": "Health and Safety Memo", "character_count": 3272, "embedded_image_count": 6}
+      ]
+    },
+    {"index": 8, "heading": "EXCAVATIONS", "character_count": 267, "embedded_image_count": 1},
+    {"index": 9, "heading": "Hazard Activities", "character_count": 776, "embedded_image_count": 1},
+    {"index": 10, "heading": "Housekeeping", "character_count": 752, "embedded_image_count": 1},
+    {"index": 12, "heading": "Accidents / Incidents", "character_count": 362, "embedded_image_count": 1}
+  ],
+  "shared_questions": [
+    {
+      "text": "1 - Where are located the First-Aid boxes on site?",
+      "type": "single_choice",
+      "options": [
+        {"text": "With the gateman", "correct": false},
+        {"text": "In the site office", "correct": true},
+        {"text": "In the canteen", "correct": false}
+      ]
+    },
+    {
+      "text": "2- What are the mandatory PPEs on the site?",
+      "type": "single_choice",
+      "options": [
+        {"text": "Hard hats, safety gloves and dust mask", "correct": false},
+        {"text": "Hard hats, safety  glasses and harnesses", "correct": false},
+        {"text": "Hard hats, safety boots and hi-viz vest", "correct": true}
+      ]
+    },
+    {
+      "text": "3- What is the speed limit when driving on the site?",
+      "type": "single_choice",
+      "options": [
+        {"text": "10km/h", "correct": false},
+        {"text": "15km/h", "correct": true},
+        {"text": "20km/h", "correct": false}
+      ]
+    }
+  ],
+  "inductions": [
+    {
+      "title": "Foxrock Site Induction",
+      "site": "Foxrock",
+      "edit_path": "/inductions/aa0fa24a-3be1-406e-bd0d-789f37b93bad/edit",
+      "page_count": 16,
+      "question_layout": "one question per page",
+      "site_pages": [
+        {"index": 0, "heading": "Foxrock / Funchal Site Induction", "character_count": 32, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 259, "embedded_image_count": 2},
+        {"index": 2, "heading": "Foxrock / Funchal Site Rules", "character_count": 525, "embedded_image_count": 1},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 490, "embedded_image_count": 2}
+      ]
+    },
+    {
+      "title": "Baileyhill Site Induction",
+      "site": "Baileyhill / Moathill",
+      "edit_path": "/inductions/794a3b93-d785-4850-919b-d753209cf41f/edit",
+      "page_count": 16,
+      "question_layout": "one question per page",
+      "site_pages": [
+        {"index": 0, "heading": "Baileyhill Site Induction", "character_count": 25, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 225, "embedded_image_count": 2},
+        {"index": 2, "heading": "Baileyhill Site Rules", "character_count": 518, "embedded_image_count": 1},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 527, "embedded_image_count": 2}
+      ]
+    },
+    {
+      "title": "Ratoath Site Induction",
+      "site": "Ratoath",
+      "edit_path": "/inductions/86d13b5f-46ac-417c-9cb0-a396fa2b4d32/edit",
+      "page_count": 16,
+      "question_layout": "one question per page",
+      "site_pages": [
+        {"index": 0, "heading": "Ratoath Site Induction", "character_count": 22, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 281, "embedded_image_count": 2},
+        {"index": 2, "heading": "Ratoath Site Rules", "character_count": 515, "embedded_image_count": 1},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 491, "embedded_image_count": 2}
+      ]
+    },
+    {
+      "title": "Kilcarn Site Induction",
+      "site": "Kilcarn",
+      "edit_path": "/inductions/3eeea4a2-2c5c-4e14-9651-00e2b1716a7d/edit",
+      "page_count": 16,
+      "question_layout": "one question per page",
+      "site_pages": [
+        {"index": 0, "heading": "Kilcarn Site Induction", "character_count": 22, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 259, "embedded_image_count": 2},
+        {"index": 2, "heading": "Kilcarn Site Rules", "character_count": 515, "embedded_image_count": 1},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 501, "embedded_image_count": 2}
+      ]
+    },
+    {
+      "title": "Portarlington site Induction",
+      "site": "Portarlington",
+      "edit_path": "/inductions/ceb4cacc-6882-4be8-91c0-a25b02e2f65c/edit",
+      "page_count": 16,
+      "question_layout": "one question per page",
+      "site_pages": [
+        {"index": 0, "heading": "Portarlington Site Induction", "character_count": 28, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 246, "embedded_image_count": 2},
+        {"index": 2, "heading": "Portarlington Site Rules", "character_count": 521, "embedded_image_count": 1},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 477, "embedded_image_count": 2}
+      ]
+    },
+    {
+      "title": "Oranmore Site Induction",
+      "site": "Oranmore",
+      "edit_path": "/inductions/a73efd20-a1b9-49d2-b30f-8554cd44e0c9/edit",
+      "page_count": 16,
+      "question_layout": "one question per page",
+      "site_pages": [
+        {"index": 0, "heading": "Oranmore Site Induction", "character_count": 23, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 226, "embedded_image_count": 2},
+        {"index": 2, "heading": "Oranmore Site Rules", "character_count": 516, "embedded_image_count": 1},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 444, "embedded_image_count": 2}
+      ]
+    },
+    {
+      "title": "Citywest Site Induction",
+      "site": "Citywest",
+      "edit_path": "/inductions/98695160-a715-41be-8996-fb1bdd4fa19f/edit",
+      "page_count": 14,
+      "question_layout": "three question blocks on final page",
+      "site_pages": [
+        {"index": 0, "heading": "Citywest Site Induction", "character_count": 23, "embedded_image_count": 1},
+        {"index": 1, "heading": "Access to Site", "character_count": 228, "embedded_image_count": 1},
+        {"index": 2, "heading": "Citywest Site Rules", "character_count": 516, "embedded_image_count": 1},
+        {"index": 8, "heading": "EXCAVATIONS", "character_count": 267, "embedded_image_count": 2},
+        {"index": 11, "heading": "EMERGENCY PLAN", "character_count": 444, "embedded_image_count": 2}
+      ]
+    }
+  ]
+}

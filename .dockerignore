@@ -1,0 +1,9 @@
+.git
+.gitignore
+source-archive
+local-app/data
+local-app/*.log
+**/__pycache__
+**/*.pyc
+archive-download-*.log
+download-manifest*.jsonl

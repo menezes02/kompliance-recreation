@@ -1,0 +1,226 @@
+[
+  {
+    "name": "NEAR MISS REPORT FORM",
+    "sections": [
+      {
+        "name": "PART 1 to be completed by Works Supervisor - To be completed for every occurrence.",
+        "questions": [
+          {
+            "text": "To be completed by Works Supervisor AND immediately forwarded to the Project Manager for completion.",
+            "type": "Textbox"
+          }
+        ]
+      },
+      {
+        "name": "GENERAL:",
+        "questions": [
+          {"text": "Site Address:", "type": "Textbox"},
+          {"text": "Contract No.:", "type": "Textbox"},
+          {"text": "Location on Site:", "type": "Location"}
+        ]
+      },
+      {
+        "name": "NEAR MISS DETAILS:",
+        "questions": [
+          {"text": "Date of Incident :", "type": "Date"},
+          {"text": "Time of incident :", "type": "Time"},
+          {"text": "Reported to:", "type": "Textbox"},
+          {"text": "Reported by :", "type": "Textbox"},
+          {"text": "Reported date:", "type": "Date"},
+          {"text": "Reported time:", "type": "Time"}
+        ]
+      },
+      {
+        "name": "FULL DESCRIPTION OF THE NEAR MISS :",
+        "questions": [
+          {
+            "text": "Full description of Near Miss and how it occurred:",
+            "type": "Textbox"
+          }
+        ]
+      },
+      {
+        "name": "GIVE DETAILS OF RELEVANT DOCUMENTATION - NOTE: All relevant documentation must be attached to this report",
+        "questions": [
+          {"text": "Photographs", "type": "Default"},
+          {"text": "Sketches", "type": "Default"},
+          {"text": "Engineer’s Report(s)", "type": "Default"},
+          {"text": "Risk assessment & Sign off sheet", "type": "Default"},
+          {"text": "Correspondence with employer", "type": "Default"},
+          {"text": "Correspondence with employee", "type": "Default"},
+          {"text": "Correspondence with others", "type": "Default"},
+          {"text": "Witness statement", "type": "Default"},
+          {"text": "Equipment Certification", "type": "Default"},
+          {"text": "Equipment inspection sheets", "type": "Default"},
+          {"text": "Other relevant information :", "type": "Default"},
+          {"text": "Print Name:", "type": "Textbox"},
+          {"text": "Signature:", "type": "Sign"},
+          {"text": "Position:", "type": "Textbox"}
+        ]
+      },
+      {
+        "name": "NEAR MISS INVESTIGATION AND PREVENTION - Part 2 to be completed by the Project Manager",
+        "questions": [
+          {"text": "Has this been adequately completed?", "type": "Default"},
+          {
+            "text": "Have all the required supplemental information been submitted with this document ?",
+            "type": "Default"
+          },
+          {
+            "text": "Probability of reoccurrence: HIGH, MEDIUM or LOW?",
+            "type": "Textbox"
+          },
+          {
+            "text": "Suggestions for continuous improvement:",
+            "type": "Textbox"
+          },
+          {"text": "Project manager name", "type": "Textbox"},
+          {"text": "Project manager signature", "type": "Sign"},
+          {"text": "Date", "type": "Date"}
+        ]
+      }
+    ]
+  },
+  {
+    "name": "FIRST AID / MINOR INJURY REPORT",
+    "sections": [
+      {
+        "name": "First Aid / Minor Injury Report",
+        "questions": [
+          {"text": "Name of injured person", "type": "Textbox"},
+          {"text": "Name of employer", "type": "Textbox"},
+          {"text": "Date of injury:", "type": "Date"},
+          {"text": "Time of injury:", "type": "Time"},
+          {"text": "Site", "type": "Textbox"}
+        ]
+      },
+      {
+        "name": "Injury information",
+        "questions": [
+          {"text": "Events leading to the injury", "type": "Textbox"},
+          {"text": "Type of injury:", "type": "Textbox"},
+          {
+            "text": "Type of treatment given & time of treatment:",
+            "type": "Textbox"
+          },
+          {"text": "Other  information:", "type": "Textbox"}
+        ]
+      },
+      {
+        "name": "Was the person advised on:",
+        "questions": [
+          {"text": "Getting qualified medical treatment", "type": "Default"},
+          {"text": "Attending a doctor or a hospital", "type": "Default"},
+          {"text": "Getting a tetanus injection", "type": "Default"}
+        ]
+      },
+      {
+        "name": "Sign off",
+        "questions": [
+          {"text": "First aider", "type": "Textbox"},
+          {"text": "First aider signature", "type": "Sign"},
+          {"text": "Person receiving first aid", "type": "Textbox"},
+          {"text": "Person receiving first aid signature", "type": "Sign"},
+          {"text": "Date", "type": "Date"}
+        ]
+      }
+    ]
+  },
+  {
+    "name": "KDL - Scaffold use daily permit to work",
+    "sections": [
+      {
+        "name": "PART A:",
+        "questions": [
+          {"text": "Specific Location", "type": "Location"},
+          {"text": "Date", "type": "Date"},
+          {"text": "Permit duration - From / To", "type": "Textbox"},
+          {"text": "Permit Issuer (KDL) Name:", "type": "Textbox"},
+          {"text": "Number of persons entering:", "type": "Textbox"},
+          {"text": "Permit User (Contractor 1) Name:", "type": "Textbox"},
+          {"text": "Permit User (Contractor 2) Name:", "type": "Textbox"},
+          {"text": "DESCRIPTION OF WORKS", "type": "Textbox"},
+          {
+            "text": "REASON FOR HAVING MORE THAN 1 CONTRACTOR WORKING ON THE SCAFFOLD:",
+            "type": "Textbox"
+          }
+        ]
+      },
+      {
+        "name": "PART B: REQUIREMENTS:",
+        "questions": [
+          {"text": "Housekeeping and storage improvements", "type": "Default"},
+          {
+            "text": "Scaffold alteration requirements by scaffolder",
+            "type": "Default"
+          },
+          {
+            "text": "Overall safety  of scaffold (e.g. board quality, overlapping boards, signage, missing items)",
+            "type": "Default"
+          },
+          {
+            "text": "Loading bay requirements - additional improvements",
+            "type": "Default"
+          },
+          {"text": "In date GA3 by CSCS scaffolder", "type": "Default"},
+          {
+            "text": "OTHER COMMENTS (e.g. ground conditions, risk assessment, other work, activities, etc)",
+            "type": "Textbox"
+          }
+        ]
+      },
+      {
+        "name": "PART C:",
+        "questions": [
+          {
+            "text": "GA3 TO BE COMPLETED AT THIS POINT BY KDL SITE MANAGER & USER FOREMAN",
+            "type": "Default"
+          }
+        ]
+      },
+      {
+        "name": "PART D:",
+        "questions": [
+          {
+            "text": "I declare that the work described above has been completed under my supervision and the area has been left in a safe condition",
+            "type": "Default"
+          },
+          {"text": "Signed - Permit user  (Contractor)", "type": "Sign"},
+          {"text": "Date / Time:", "type": "Date Time"}
+        ]
+      },
+      {
+        "name": "PART E:",
+        "questions": [
+          {
+            "text": "I declare that the work described above has been completed under my supervision and the area has been left in a safe condition.",
+            "type": "Default"
+          },
+          {"text": "Signed - Permit issuer (KDL)", "type": "Sign"},
+          {"text": "Date / Time:", "type": "Date Time"}
+        ]
+      },
+      {
+        "name": "PART F:",
+        "questions": [
+          {
+            "text": "I hereby cancel this permit to work for the following reason:",
+            "type": "Textbox"
+          },
+          {
+            "text": "The following precautions have been put in place, and the area is now free from risk:",
+            "type": "Textbox"
+          },
+          {"text": "Signed - (Permit issuer & user)", "type": "Sign"},
+          {"text": "Date / Time:", "type": "Date Time"},
+          {"text": "Signed - (Permit issuer- KDL)", "type": "Sign"},
+          {"text": "Date / Time:", "type": "Date Time"},
+          {
+            "text": "THIS DOCUMENT IS SUBJECT TO AUDIT AND IS TO BE COMPLETED DAILY.",
+            "type": "Textbox"
+          }
+        ]
+      }
+    ]
+  }
+]
