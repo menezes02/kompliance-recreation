@@ -325,10 +325,12 @@ const state = {
   listFilters: {
     site: "",
     worker: "",
-    dateFrom: "",
-    dateTo: "",
+    dateStart: "",
+    dateEnd: "",
     order: "newest",
   },
+  calendarMonth: new Date().toISOString().slice(0, 7),
+  calendarOpen: false,
   currentConfig: null,
   currentRows: [],
 };
@@ -385,6 +387,87 @@ function dateValue(value) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function isoDate(timestamp) {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function displayDate(value) {
+  const timestamp = dateValue(value);
+  if (!timestamp) return "";
+  return new Intl.DateTimeFormat("en-IE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(timestamp));
+}
+
+function selectedDateLabel() {
+  const { dateStart, dateEnd } = state.listFilters;
+  if (!dateStart) return "All submitted dates";
+  if (!dateEnd || dateEnd === dateStart) return displayDate(dateStart);
+  return `${displayDate(dateStart)} – ${displayDate(dateEnd)}`;
+}
+
+function calendarMarkup() {
+  const [year, month] = state.calendarMonth.split("-").map(Number);
+  const monthStart = Date.UTC(year, month - 1, 1);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const leadingDays = (new Date(monthStart).getUTCDay() + 6) % 7;
+  const today = new Date().toISOString().slice(0, 10);
+  const { dateStart, dateEnd } = state.listFilters;
+  const rangeStart = dateStart && dateEnd ? [dateStart, dateEnd].sort()[0] : "";
+  const rangeEnd = dateStart && dateEnd ? [dateStart, dateEnd].sort()[1] : "";
+  const monthLabel = new Intl.DateTimeFormat("en-IE", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(monthStart));
+  const dayCells = Array.from({ length: 42 }, (_, index) => {
+    const day = index - leadingDays + 1;
+    if (day < 1 || day > daysInMonth) {
+      return `<span class="calendar-day empty" aria-hidden="true"></span>`;
+    }
+    const iso = isoDate(Date.UTC(year, month - 1, day));
+    const isEndpoint = iso === dateStart || iso === dateEnd;
+    const isInRange = rangeStart && iso > rangeStart && iso < rangeEnd;
+    const classes = [
+      "calendar-day",
+      isEndpoint ? "selected" : "",
+      isInRange ? "in-range" : "",
+      iso === today ? "today" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return `
+      <button class="${classes}" type="button" data-calendar-day="${iso}"
+              aria-label="${escapeHtml(displayDate(iso))}" aria-pressed="${isEndpoint}">
+        ${day}
+      </button>
+    `;
+  }).join("");
+  const guidance = dateStart && !dateEnd
+    ? "Showing this day. Choose another date to extend the range."
+    : "Choose one day, or choose two days for a range.";
+  return `
+    <div class="date-range-popover ${state.calendarOpen ? "" : "hidden"}" id="date-range-popover">
+      <div class="calendar-header">
+        <button type="button" data-calendar-nav="-1" aria-label="Previous month">‹</button>
+        <strong>${escapeHtml(monthLabel)}</strong>
+        <button type="button" data-calendar-nav="1" aria-label="Next month">›</button>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        ${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="calendar-grid">${dayCells}</div>
+      <div class="calendar-footer">
+        <small>${escapeHtml(guidance)}</small>
+        <button type="button" id="clear-date-range">Clear date</button>
+      </div>
+    </div>
+  `;
+}
+
 function uniqueValues(rows, key) {
   return [
     ...new Set(
@@ -397,9 +480,9 @@ function uniqueValues(rows, key) {
 
 function applyListFilters(rows, config) {
   if (config.filterMode !== "hsa") return [...rows];
-  const { site, worker, dateFrom, dateTo, order } = state.listFilters;
-  const fromValue = dateValue(dateFrom);
-  const toValue = dateValue(dateTo);
+  const { site, worker, dateStart, dateEnd, order } = state.listFilters;
+  const fromValue = dateValue(dateStart);
+  const toValue = dateValue(dateEnd || dateStart);
   const filtered = rows.filter(
     (row) => {
       const submittedValue = dateValue(row.submitted_date);
@@ -629,16 +712,17 @@ async function renderList(config) {
                 .join("")}
             </select>
           </label>
-          <label>
-            <span>Submitted from</span>
-            <input id="filter-dateFrom" type="date" value="${escapeHtml(state.listFilters.dateFrom)}"
-                   max="${escapeHtml(state.listFilters.dateTo)}" />
-          </label>
-          <label>
-            <span>Submitted to</span>
-            <input id="filter-dateTo" type="date" value="${escapeHtml(state.listFilters.dateTo)}"
-                   min="${escapeHtml(state.listFilters.dateFrom)}" />
-          </label>
+          <div class="date-range-filter">
+            <span class="filter-label">Submitted date</span>
+            <button class="date-range-trigger ${state.listFilters.dateStart ? "active" : ""}"
+                    id="date-range-trigger" type="button"
+                    aria-haspopup="dialog" aria-expanded="${state.calendarOpen}">
+              <span aria-hidden="true">▦</span>
+              <strong>${escapeHtml(selectedDateLabel())}</strong>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            ${calendarMarkup()}
+          </div>
           <label>
             <span>Creation order</span>
             <select id="filter-order">
@@ -706,21 +790,67 @@ function bindTableEvents(config) {
       await renderList(config);
     }, 250);
   });
-  ["site", "worker", "dateFrom", "dateTo", "order"].forEach((filterName) => {
+  ["site", "worker", "order"].forEach((filterName) => {
     document.querySelector(`#filter-${filterName}`)?.addEventListener("change", async (event) => {
       state.listFilters[filterName] = event.target.value;
+      state.calendarOpen = false;
       state.page = 1;
       await renderList(config);
     });
+  });
+  document.querySelector("#date-range-trigger")?.addEventListener("click", async () => {
+    state.calendarOpen = !state.calendarOpen;
+    if (state.calendarOpen && state.listFilters.dateStart) {
+      state.calendarMonth = state.listFilters.dateStart.slice(0, 7);
+    }
+    await renderList(config);
+  });
+  document.querySelectorAll("[data-calendar-nav]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const [year, month] = state.calendarMonth.split("-").map(Number);
+      const target = new Date(Date.UTC(year, month - 1 + Number(button.dataset.calendarNav), 1));
+      state.calendarMonth = target.toISOString().slice(0, 7);
+      state.calendarOpen = true;
+      await renderList(config);
+    });
+  });
+  document.querySelectorAll("[data-calendar-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const selected = button.dataset.calendarDay;
+      const { dateStart, dateEnd } = state.listFilters;
+      if (!dateStart || dateEnd) {
+        state.listFilters.dateStart = selected;
+        state.listFilters.dateEnd = "";
+        state.calendarOpen = true;
+      } else if (selected === dateStart) {
+        state.listFilters.dateEnd = "";
+        state.calendarOpen = false;
+      } else {
+        const [start, end] = [dateStart, selected].sort();
+        state.listFilters.dateStart = start;
+        state.listFilters.dateEnd = end;
+        state.calendarOpen = false;
+      }
+      state.page = 1;
+      await renderList(config);
+    });
+  });
+  document.querySelector("#clear-date-range")?.addEventListener("click", async () => {
+    state.listFilters.dateStart = "";
+    state.listFilters.dateEnd = "";
+    state.calendarOpen = false;
+    state.page = 1;
+    await renderList(config);
   });
   document.querySelector("#clear-filters")?.addEventListener("click", async () => {
     state.listFilters = {
       site: "",
       worker: "",
-      dateFrom: "",
-      dateTo: "",
+      dateStart: "",
+      dateEnd: "",
       order: "newest",
     };
+    state.calendarOpen = false;
     state.page = 1;
     await renderList(config);
   });
@@ -1344,10 +1474,11 @@ async function route() {
       state.listFilters = {
         site: "",
         worker: "",
-        dateFrom: "",
-        dateTo: "",
+        dateStart: "",
+        dateEnd: "",
         order: "newest",
       };
+      state.calendarOpen = false;
       await renderList(LIST_ROUTES[path]);
     } else if (path === "/archive") {
       await renderArchive();
