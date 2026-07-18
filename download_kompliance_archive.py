@@ -245,6 +245,38 @@ class KomplianceSession:
             raise RuntimeError("Session expired while reading a data table")
         return json.loads(data.decode("utf-8", "replace"))
 
+    def post_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        body = urllib.parse.urlencode(params).encode()
+        last_error: Exception | None = None
+        for attempt in range(1, 5):
+            try:
+                request = urllib.request.Request(
+                    absolute_url(path),
+                    data=body,
+                    method="POST",
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Cookie": self.cookie_header,
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Accept": "application/json",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                )
+                with self.opener.open(request, timeout=45) as response:
+                    data = response.read()
+                    final_url = response.geturl()
+                break
+            except Exception as error:  # noqa: BLE001 - retry transient network errors
+                last_error = error
+                if attempt == 4:
+                    raise
+                time.sleep(attempt * 1.5)
+        else:  # pragma: no cover - loop always breaks or raises
+            raise RuntimeError(f"Unable to post to {path}: {last_error}")
+        if urllib.parse.urlparse(final_url).path == "/login":
+            raise RuntimeError("Session expired while reading a data table")
+        return json.loads(data.decode("utf-8", "replace"))
+
     def fetch_table(self, path: str, page_size: int = 500) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         start = 0
@@ -393,6 +425,51 @@ def collect_archive_tasks(session: KomplianceSession) -> tuple[list[dict[str, An
             if not detail_url:
                 continue
             detail_html = session.get_text(detail_url)
+            if category == "ga1":
+                token = extract_csrf(detail_html)
+                start = 0
+                draw = 1
+                total: int | None = None
+                while total is None or start < total:
+                    payload = session.post_json(
+                        "/ga1/documents",
+                        {
+                            "_token": token,
+                            "draw": draw,
+                            "start": start,
+                            "length": 500,
+                            "ga1_form_id": set_id,
+                        },
+                    )
+                    documents = payload.get("data") or []
+                    total = int(
+                        payload.get("recordsFiltered", payload.get("recordsTotal", 0))
+                    )
+                    for document in documents:
+                        document_id = safe_identifier(document.get("id"))
+                        filename = str(document.get("document") or "")
+                        suffix = PurePosixPath(filename).suffix.lower()
+                        hrefs = [
+                            href
+                            for href in extract_hrefs(document.get("action"))
+                            if "/ga1/download/" in href
+                        ]
+                        href = hrefs[0] if hrefs else f"/ga1/download/{document_id}"
+                        add_task(
+                            tasks,
+                            url=href,
+                            category=f"documents/{category}/{set_id}",
+                            stem=f"document_{document_id}",
+                            extension=(
+                                suffix if suffix in SAFE_EXISTING_EXTENSIONS else None
+                            ),
+                            source_id=document_id,
+                        )
+                    if not documents:
+                        break
+                    start += len(documents)
+                    draw += 1
+                continue
             for href in extract_hrefs(detail_html):
                 if (
                     (category == "ga1" and "/ga1/download/" in href)

@@ -410,6 +410,29 @@ def row_to_record(row: sqlite3.Row) -> dict:
         "updated_at": row["updated_at"],
     }
 
+def attach_archive_documents(resource: str, record: dict) -> dict:
+    if resource != "ga1":
+        return record
+    source_id = record.get("source_id")
+    if not source_id:
+        return record
+    archive_folder = ARCHIVE_ROOT / f"documents-ga1-{source_id}"
+    if not archive_folder.exists():
+        return record
+    files = sorted(
+        (item for item in archive_folder.iterdir() if item.is_file()),
+        key=lambda item: (item.suffix.lower() != ".pdf", item.name.lower()),
+    )
+    archive_paths = [
+        item.relative_to(ARCHIVE_ROOT).as_posix()
+        for item in files
+    ]
+    if archive_paths:
+        record["archive_paths"] = archive_paths
+        record["archive_path"] = archive_paths[0]
+        record["document_count"] = len(archive_paths)
+    return record
+
 
 def clean_resource(value: str) -> str:
     return "".join(
@@ -603,7 +626,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 if row is None:
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
-                self.send_json(row_to_record(row))
+                self.send_json(attach_archive_documents(resource, row_to_record(row)))
                 return
 
             params = parse_qs(query)
@@ -618,7 +641,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 """,
                 (resource,),
             ).fetchall()
-        records = [row_to_record(row) for row in rows]
+        records = [
+            attach_archive_documents(resource, row_to_record(row))
+            for row in rows
+        ]
         if search:
             records = [
                 record

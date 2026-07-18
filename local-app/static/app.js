@@ -266,18 +266,22 @@ function hsaConfig(resource, title) {
 }
 
 function documentSetConfig(resource, title, addLabel) {
+  const columns = [
+    ["title", "Title"],
+    ["company", "Company Name"],
+    ["subcontractor", "Subcontractor Name"],
+    ["site", "Site Name"],
+    ["expiry_date", "Expiry Date"],
+    ["expiry_status", "Expiry Status", "status"],
+  ];
+  if (resource === "ga1") {
+    columns.push(["archive_paths", "Documents", "archives"]);
+  }
   return {
     resource,
     title,
     addLabel,
-    columns: [
-      ["title", "Title"],
-      ["company", "Company Name"],
-      ["subcontractor", "Subcontractor Name"],
-      ["site", "Site Name"],
-      ["expiry_date", "Expiry Date"],
-      ["expiry_status", "Expiry Status", "status"],
-    ],
+    columns,
     fields: [
       { name: "title", label: "Title", required: true },
       { name: "company", label: "Company" },
@@ -375,6 +379,26 @@ function archiveHref(value) {
     .map((part) => encodeURIComponent(part))
     .join("/");
   return safePath ? `/archive/${safePath}` : "";
+}
+
+function isPdfPath(value) {
+  return /\.pdf$/i.test(String(value || ""));
+}
+
+function archiveDocumentLink(value) {
+  const href = archiveHref(value);
+  if (!href) return "";
+  const fileName = String(value).replaceAll("\\", "/").split("/").pop();
+  const previewAttributes = isPdfPath(value)
+    ? `data-pdf-preview data-pdf-name="${escapeHtml(fileName)}"`
+    : "";
+  return `
+    <a class="document-link" href="${escapeHtml(href)}" target="_blank" rel="noopener"
+       ${previewAttributes} title="${isPdfPath(value) ? "Preview" : "Open"} ${escapeHtml(fileName)}">
+      <span aria-hidden="true">↗</span>
+      ${escapeHtml(fileName)}
+    </a>
+  `;
 }
 
 function dateValue(value) {
@@ -509,17 +533,12 @@ function renderCell(value, format) {
     return `<span class="status ${escapeHtml(status.toLowerCase().replaceAll(" ", "-"))}">${escapeHtml(status)}</span>`;
   }
   if (format === "archive") {
-    const href = archiveHref(value);
-    if (!href) return "—";
-    const fileName = String(value).replaceAll("\\", "/").split("/").pop();
-    return `
-      <a class="document-link" href="${escapeHtml(href)}" target="_blank" rel="noopener"
-         data-pdf-preview data-pdf-name="${escapeHtml(fileName)}"
-         title="Preview ${escapeHtml(fileName)}">
-        <span aria-hidden="true">↗</span>
-        ${escapeHtml(fileName)}
-      </a>
-    `;
+    return archiveDocumentLink(value) || "—";
+  }
+  if (format === "archives") {
+    const paths = Array.isArray(value) ? value : [];
+    if (!paths.length) return "—";
+    return `<div class="document-links">${paths.map(archiveDocumentLink).join("")}</div>`;
   }
   if (!value) return "—";
   if (String(value).includes("/") && String(value).includes(".")) {
@@ -706,13 +725,23 @@ async function renderList(config) {
           const cells = config.columns
             .map(([key, , format]) => `<td>${renderCell(row[key], format)}</td>`)
             .join("");
-          const viewAction = row.archive_path
+          const documentPaths = [
+            ...(Array.isArray(row.archive_paths) ? row.archive_paths : []),
+            row.archive_path,
+          ].filter(Boolean);
+          const actionPath =
+            documentPaths.find((path) => isPdfPath(path)) || documentPaths[0];
+          const actionFileName = actionPath
+            ? String(actionPath).replaceAll("\\", "/").split("/").pop()
+            : "";
+          const viewAction = actionPath
             ? `
-              <a class="button-icon view-document" href="${escapeHtml(archiveHref(row.archive_path))}"
-                 target="_blank" rel="noopener" data-pdf-preview
-                 data-pdf-name="${escapeHtml(String(row.archive_path).replaceAll("\\", "/").split("/").pop())}"
-                 title="Preview PDF" aria-label="Preview archived PDF">
-                Preview
+              <a class="button-icon view-document" href="${escapeHtml(archiveHref(actionPath))}"
+                 target="_blank" rel="noopener"
+                 ${isPdfPath(actionPath) ? `data-pdf-preview data-pdf-name="${escapeHtml(actionFileName)}"` : ""}
+                 title="${isPdfPath(actionPath) ? "Preview PDF" : "Open document"}"
+                 aria-label="${isPdfPath(actionPath) ? "Preview archived PDF" : "Open archived document"}">
+                ${isPdfPath(actionPath) ? "Preview" : "Open"}
               </a>
             `
             : "";
