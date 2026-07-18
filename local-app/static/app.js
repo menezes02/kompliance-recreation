@@ -245,6 +245,7 @@ function hsaConfig(resource, title) {
     resource,
     title,
     addLabel: "Add Local Example",
+    filterMode: "hsa",
     columns: [
       ["subcontractor", "Subcontractor Name"],
       ["site", "Site Name"],
@@ -321,6 +322,12 @@ const state = {
   search: "",
   pageSize: 10,
   page: 1,
+  listFilters: {
+    site: "",
+    worker: "",
+    date: "",
+    order: "newest",
+  },
   currentConfig: null,
   currentRows: [],
 };
@@ -365,6 +372,49 @@ function archiveHref(value) {
     .map((part) => encodeURIComponent(part))
     .join("/");
   return safePath ? `/archive/${safePath}` : "";
+}
+
+function dateValue(value) {
+  const text = String(value || "").trim();
+  const european = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (european) {
+    return Date.UTC(Number(european[3]), Number(european[2]) - 1, Number(european[1]));
+  }
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function dateKey(value) {
+  const timestamp = dateValue(value);
+  if (!timestamp) return "";
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function uniqueValues(rows, key) {
+  return [
+    ...new Set(
+      rows
+        .map((row) => String(row[key] || "").trim())
+        .filter((value) => value && value !== "-"),
+    ),
+  ].sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" }));
+}
+
+function applyListFilters(rows, config) {
+  if (config.filterMode !== "hsa") return [...rows];
+  const { site, worker, date, order } = state.listFilters;
+  const filtered = rows.filter(
+    (row) =>
+      (!site || row.site === site) &&
+      (!worker || row.worker === worker) &&
+      (!date || dateKey(row.submitted_date) === date),
+  );
+  return filtered.sort((left, right) => {
+    const difference = dateValue(left.created_at) - dateValue(right.created_at);
+    const fallback = Number(left.source_id || left.id) - Number(right.source_id || right.id);
+    const comparison = difference || fallback;
+    return order === "oldest" ? comparison : -comparison;
+  });
 }
 
 function renderCell(value, format) {
@@ -494,11 +544,15 @@ async function renderList(config) {
     limit: "5000",
   });
   const result = await api(`/api/resources/${config.resource}?${query}`);
-  state.currentRows = result.data;
-  const totalPages = Math.max(1, Math.ceil(result.total / state.pageSize));
+  const filteredRows = applyListFilters(result.data, config);
+  const filteredTotal = filteredRows.length;
+  state.currentRows = filteredRows;
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / state.pageSize));
   state.page = Math.min(state.page, totalPages);
   const start = (state.page - 1) * state.pageSize;
-  const rows = result.data.slice(start, start + state.pageSize);
+  const rows = filteredRows.slice(start, start + state.pageSize);
+  const siteOptions = uniqueValues(result.data, "site");
+  const workerOptions = uniqueValues(result.data, "worker");
 
   const headers = [
     `<th>#</th>`,
@@ -545,6 +599,50 @@ async function renderList(config) {
     )
     .join("");
 
+  const advancedFilters =
+    config.filterMode === "hsa"
+      ? `
+        <div class="advanced-filters" aria-label="Record filters">
+          <label>
+            <span>Site</span>
+            <select id="filter-site">
+              <option value="">All sites</option>
+              ${siteOptions
+                .map(
+                  (site) =>
+                    `<option value="${escapeHtml(site)}" ${site === state.listFilters.site ? "selected" : ""}>${escapeHtml(site)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Worker name</span>
+            <select id="filter-worker">
+              <option value="">All workers</option>
+              ${workerOptions
+                .map(
+                  (worker) =>
+                    `<option value="${escapeHtml(worker)}" ${worker === state.listFilters.worker ? "selected" : ""}>${escapeHtml(worker)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Submitted date</span>
+            <input id="filter-date" type="date" value="${escapeHtml(state.listFilters.date)}" />
+          </label>
+          <label>
+            <span>Creation order</span>
+            <select id="filter-order">
+              <option value="newest" ${state.listFilters.order === "newest" ? "selected" : ""}>Newest first</option>
+              <option value="oldest" ${state.listFilters.order === "oldest" ? "selected" : ""}>Oldest first</option>
+            </select>
+          </label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `
+      : "";
+
   app.innerHTML = `
     ${pageHeader(
       config.title,
@@ -568,6 +666,7 @@ async function renderList(config) {
           <input id="table-search" value="${escapeHtml(state.search)}" />
         </label>
       </div>
+      ${advancedFilters}
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr>${headers}</tr></thead>
@@ -575,7 +674,7 @@ async function renderList(config) {
         </table>
       </div>
       <div class="table-footer">
-        <span>Showing ${result.total ? start + 1 : 0} to ${Math.min(start + rows.length, result.total)} of ${result.total} entries</span>
+        <span>Showing ${filteredTotal ? start + 1 : 0} to ${Math.min(start + rows.length, filteredTotal)} of ${filteredTotal} entries</span>
         <div class="pagination">${pagination}</div>
       </div>
     </section>
@@ -598,6 +697,18 @@ function bindTableEvents(config) {
       state.page = 1;
       await renderList(config);
     }, 250);
+  });
+  ["site", "worker", "date", "order"].forEach((filterName) => {
+    document.querySelector(`#filter-${filterName}`)?.addEventListener("change", async (event) => {
+      state.listFilters[filterName] = event.target.value;
+      state.page = 1;
+      await renderList(config);
+    });
+  });
+  document.querySelector("#clear-filters")?.addEventListener("click", async () => {
+    state.listFilters = { site: "", worker: "", date: "", order: "newest" };
+    state.page = 1;
+    await renderList(config);
   });
   document.querySelectorAll("[data-page]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1216,6 +1327,7 @@ async function route() {
     } else if (LIST_ROUTES[path]) {
       state.search = "";
       state.page = 1;
+      state.listFilters = { site: "", worker: "", date: "", order: "newest" };
       await renderList(LIST_ROUTES[path]);
     } else if (path === "/archive") {
       await renderArchive();

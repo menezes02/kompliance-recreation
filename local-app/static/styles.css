@@ -1725,6 +1725,62 @@ body {
   padding: 8px 12px;
 }
 
+.advanced-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  margin: -2px 0 18px;
+  padding: 16px;
+  border: 1px solid #e4ebf2;
+  border-radius: 11px;
+  background: #f8fafc;
+}
+
+.advanced-filters label {
+  display: grid;
+  gap: 7px;
+  color: #68778b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.advanced-filters select,
+.advanced-filters input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #d8e2eb;
+  border-radius: 9px;
+  color: #26364c;
+  background: white;
+  font-size: 12px;
+}
+
+.advanced-filters select:focus,
+.advanced-filters input:focus {
+  border-color: var(--green);
+  outline: 3px solid rgba(22, 167, 122, 0.12);
+}
+
+.clear-filters {
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid #d8e2eb;
+  border-radius: 9px;
+  color: #607086;
+  background: white;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.clear-filters:hover {
+  border-color: #b7c6d5;
+  color: #26364c;
+}
+
 .table-scroll {
   border: 1px solid #e6ebf1;
   border-radius: 11px;
@@ -2028,6 +2084,10 @@ body {
   .hero-stats > div {
     grid-template-columns: 1fr;
   }
+
+  .advanced-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {
@@ -2079,6 +2139,10 @@ body {
 
   .hero-stats > div {
     grid-template-columns: 72px 1fr;
+  }
+
+  .advanced-filters {
+    grid-template-columns: 1fr;
   }
 
   .metric-card,
