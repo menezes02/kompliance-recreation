@@ -1578,7 +1578,7 @@ function pageHeader(title, subtitle = "", action = "") {
 }
 
 async function renderDashboard() {
-  const [counts, ga1Result, workerResult, riskResult, distributionResult, inductionResult, assetResult, trainingResult, formResult] = await Promise.all([
+  const [counts, ga1Result, workerResult, riskResult, distributionResult, inductionResult, assetResult, trainingResult, formResult, reminderResult] = await Promise.all([
     api("/api/dashboard"),
     api("/api/resources/ga1?limit=5000"),
     api("/api/resources/workers?limit=5000"),
@@ -1588,6 +1588,7 @@ async function renderDashboard() {
     api("/api/resources/assets?limit=5000"),
     api("/api/resources/training?limit=5000"),
     api("/api/resources/forms?limit=5000"),
+    api("/api/compliance/reminders?days=30"),
   ]);
   const ga1Rows = ga1Result.data || [];
   const workerRows = workerResult.data || [];
@@ -1597,6 +1598,7 @@ async function renderDashboard() {
   const assetRows = assetResult.data || [];
   const trainingRows = trainingResult.data || [];
   const formRows = formResult.data || [];
+  const expiryCounts = reminderResult.counts || {};
   const inductionSubmissionTotal = inductionRows.reduce((total, row) => total + Number(row.submissions || 0), 0);
   const inductionPageTotal = inductionRows.reduce((total, row) => total + inductionStats(row).pages.length, 0);
   const preservedAssetQrTotal = assetRows.filter((row) => row.qr_archive_path).length;
@@ -1840,6 +1842,7 @@ async function renderDashboard() {
       <a class="operations-summary-card" href="/appliances" data-route><span>Asset register</span><strong>${assetRows.length}</strong><small>${preservedAssetQrTotal} preserved QR images</small></a>
       <a class="operations-summary-card attention" href="/training" data-route><span>Training catalogue</span><strong>${trainingRows.length}</strong><small>${expiredTrainingIndicators} source expiry indicators</small></a>
       <a class="operations-summary-card" href="/forms" data-route><span>Custom form definitions</span><strong>${formRows.length}</strong><small>${formQuestionTotal} mapped questions</small></a>
+      <a class="operations-summary-card attention" href="/compliance" data-route><span>Expiry actions</span><strong>${Number(expiryCounts.overdue || 0) + Number(expiryCounts.due_soon || 0)}</strong><small>${Number(expiryCounts.overdue || 0)} overdue · ${Number(expiryCounts.due_soon || 0)} due within 30 days</small></a>
     </section>
     <div class="section-heading">
       <div><span>Workspace modules</span><strong>Everything at a glance</strong></div>
@@ -3156,10 +3159,11 @@ function renderChangePassword() {
       return;
     }
     try {
-      await api("/api/auth/password", {
+      const result = await api("/api/auth/password", {
         method: "POST",
         body: JSON.stringify({ current: form.get("current"), new: form.get("new") }),
       });
+      state.auth.csrfToken = result.csrf_token || state.auth.csrfToken;
       event.currentTarget.reset();
       showToast("Password changed securely.");
     } catch (error) {
@@ -3196,7 +3200,7 @@ async function renderUserManagement() {
       <article><span>Administrator</span><strong>Security ownership</strong><small>Can manage users, delete local records and review audit events.</small></article>
     </div>
     <section class="card table-card">
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>State</th><th>Created</th></tr></thead><tbody>${users.map((user, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.email)}</td><td><span class="status">${escapeHtml(user.role)}</span></td><td>${user.active ? "Active" : "Disabled"}</td><td>${escapeHtml(displayDate(user.created_at))}</td></tr>`).join("")}</tbody></table></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>State</th><th>Sessions</th><th>Security</th><th>Actions</th></tr></thead><tbody>${users.map((user, index) => `<tr><td>${index + 1}</td><td><input class="user-inline-name" data-user-name="${user.id}" value="${escapeHtml(user.name)}" /></td><td>${escapeHtml(user.email)}</td><td><select data-user-role="${user.id}">${["viewer", "editor", "admin"].map((role) => `<option ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}</select></td><td><label class="toggle-label"><input type="checkbox" data-user-active="${user.id}" ${user.active ? "checked" : ""} /> Active</label></td><td>${Number(user.session_count || 0)}</td><td>${user.locked_until ? `Locked until ${escapeHtml(displayDate(user.locked_until) || user.locked_until)}` : `${Number(user.failed_attempts || 0)} failed`}</td><td><div class="user-actions"><button type="button" data-save-user="${user.id}">Save</button><button type="button" data-revoke-user="${user.id}">Sign out all</button><button type="button" data-reset-user="${user.id}">Reset link</button></div></td></tr>`).join("")}</tbody></table></div>
     </section>
     <section class="card form-card compact-form-card">
       <div class="local-section-heading"><span>Administrator action</span><h2>Create an application account</h2><p>The password is stored only as a PBKDF2 hash.</p></div>
@@ -3219,6 +3223,24 @@ async function renderUserManagement() {
       showToast(error.message, "error");
     }
   });
+  document.querySelectorAll("[data-save-user]").forEach((button) => button.addEventListener("click", async () => {
+    const id = button.dataset.saveUser;
+    try {
+      await api(`/api/users/${id}`, { method: "PUT", body: JSON.stringify({ name: document.querySelector(`[data-user-name='${id}']`).value, role: document.querySelector(`[data-user-role='${id}']`).value, active: document.querySelector(`[data-user-active='${id}']`).checked }) });
+      showToast("Account security settings updated.");
+      await renderUserManagement();
+    } catch (error) { showToast(error.message, "error"); }
+  }));
+  document.querySelectorAll("[data-revoke-user]").forEach((button) => button.addEventListener("click", async () => {
+    try { await api(`/api/users/${button.dataset.revokeUser}/revoke-sessions`, { method: "POST", body: "{}" }); showToast("All sessions revoked for this account."); await renderUserManagement(); } catch (error) { showToast(error.message, "error"); }
+  }));
+  document.querySelectorAll("[data-reset-user]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      const result = await api(`/api/users/${button.dataset.resetUser}/reset-link`, { method: "POST", body: "{}" });
+      await navigator.clipboard.writeText(result.reset_url);
+      showToast("Secure reset link copied. It expires in 30 minutes.");
+    } catch (error) { showToast(error.message, "error"); }
+  }));
 }
 
 function localSnapshotDate() {
@@ -3318,6 +3340,222 @@ async function renderLocalWorkflows() {
   });
 }
 
+let selectedPilotAssignmentId = null;
+
+function flattenFormQuestions(formRecord) {
+  return (formRecord?.definition?.sections || []).flatMap((section, sectionIndex) =>
+    (section.questions || []).map((question, questionIndex) => ({
+      ...question,
+      section: section.name || `Section ${sectionIndex + 1}`,
+      key: `s${sectionIndex}q${questionIndex}`,
+    })),
+  );
+}
+
+function pilotQuestionMarkup(question, existingValue = "", disabled = false) {
+  const name = `answer_${question.key}`;
+  const safeValue = escapeHtml(existingValue || "");
+  const disabledAttribute = disabled ? "disabled" : "";
+  let control;
+  if (question.type === "Date") {
+    control = `<input type="date" name="${name}" value="${safeValue}" ${disabledAttribute} />`;
+  } else if (question.type === "Time") {
+    control = `<input type="time" name="${name}" value="${safeValue}" ${disabledAttribute} />`;
+  } else if (question.type === "Date Time") {
+    control = `<input type="datetime-local" name="${name}" value="${safeValue}" ${disabledAttribute} />`;
+  } else if (question.type === "Default") {
+    control = `<select name="${name}" ${disabledAttribute}><option value="">Select</option>${["Yes", "No", "N/A"].map((option) => `<option ${existingValue === option ? "selected" : ""}>${option}</option>`).join("")}</select>`;
+  } else if (question.type === "Sign") {
+    control = disabled
+      ? `<div class="signature-readout">${existingValue ? "Captured signature" : "No signature"}</div>`
+      : `<div class="signature-pad" data-signature-pad><canvas width="720" height="180" aria-label="Signature pad"></canvas><input type="hidden" name="${name}" value="${safeValue}" /><button class="button button-secondary signature-clear" type="button">Clear</button></div>`;
+  } else if (question.type === "Textbox") {
+    control = `<textarea name="${name}" rows="3" ${disabledAttribute}>${safeValue}</textarea>`;
+  } else {
+    control = `<input name="${name}" value="${safeValue}" ${disabledAttribute} />`;
+  }
+  return `<label class="pilot-question"><span>${escapeHtml(question.text || "Question")} <b>Required</b></span><small>${escapeHtml(question.type || "Text")} · ${escapeHtml(question.section)}</small>${control}</label>`;
+}
+
+function bindSignaturePads() {
+  document.querySelectorAll("[data-signature-pad]").forEach((pad) => {
+    const canvas = pad.querySelector("canvas");
+    const input = pad.querySelector("input[type='hidden']");
+    const context = canvas.getContext("2d");
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = 3;
+    context.strokeStyle = "#12395a";
+    if (input.value) {
+      const image = new Image();
+      image.onload = () => context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      image.src = input.value;
+    }
+    let drawing = false;
+    const point = (event) => {
+      const rectangle = canvas.getBoundingClientRect();
+      return {
+        x: (event.clientX - rectangle.left) * (canvas.width / rectangle.width),
+        y: (event.clientY - rectangle.top) * (canvas.height / rectangle.height),
+      };
+    };
+    canvas.addEventListener("pointerdown", (event) => {
+      drawing = true;
+      canvas.setPointerCapture(event.pointerId);
+      const current = point(event);
+      context.beginPath();
+      context.moveTo(current.x, current.y);
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (!drawing) return;
+      const current = point(event);
+      context.lineTo(current.x, current.y);
+      context.stroke();
+    });
+    const finish = () => {
+      if (!drawing) return;
+      drawing = false;
+      input.value = canvas.toDataURL("image/png");
+    };
+    canvas.addEventListener("pointerup", finish);
+    canvas.addEventListener("pointercancel", finish);
+    pad.querySelector(".signature-clear").addEventListener("click", () => {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      input.value = "";
+    });
+  });
+}
+
+async function renderPilotWorkflows() {
+  const [workerResult, formResult, inductionResult, distributionResult, uploadResult, completionResult, submissionResult, evidenceResult] = await Promise.all([
+    api("/api/resources/workers?limit=5000"),
+    api("/api/resources/forms?limit=5000"),
+    api("/api/resources/inductions?limit=5000"),
+    api("/api/resources/distributions?limit=5000"),
+    api("/api/resources/local_uploads?limit=5000"),
+    api("/api/resources/local_induction_completions?limit=5000"),
+    api("/api/resources/local_submissions?limit=5000"),
+    api("/api/resources/local_evidence?limit=5000"),
+  ]);
+  const workers = workerResult.data || [];
+  const forms = formResult.data || [];
+  const inductions = inductionResult.data || [];
+  const localDistributions = (distributionResult.data || []).filter((row) => !row._read_only && row.local_only);
+  const uploads = uploadResult.data || [];
+  const completions = completionResult.data || [];
+  const submissions = submissionResult.data || [];
+  const evidence = evidenceResult.data || [];
+  const editable = canEditLocalRecords();
+  if (!selectedPilotAssignmentId && localDistributions.length) selectedPilotAssignmentId = String(localDistributions[0].id);
+  const selectedDistribution = localDistributions.find((row) => String(row.id) === String(selectedPilotAssignmentId));
+  const selectedForm = forms.find((row) => String(row.name || "").toLowerCase() === String(selectedDistribution?.form || "").toLowerCase());
+  const selectedSubmission = submissions.find((row) => String(row.distribution_id) === String(selectedDistribution?.id));
+  const selectedEvidence = evidence.filter((row) => String(row.distribution_id) === String(selectedDistribution?.id));
+  const existingAnswers = Object.fromEntries((selectedSubmission?.answers || []).map((answer) => [answer.key, answer.value]));
+  const formQuestions = flattenFormQuestions(selectedForm);
+  const submitted = selectedSubmission?.status === "Submitted";
+  const workerOptions = workers.map((worker) => `<option value="${escapeHtml(worker.name)}">${escapeHtml(worker.name)} · ${escapeHtml(worker.sites || "No site")}</option>`).join("");
+  const assignmentOptions = localDistributions.map((row) => `<option value="${row.id}" ${String(row.id) === String(selectedPilotAssignmentId) ? "selected" : ""}>${escapeHtml(row.worker)} · ${escapeHtml(row.form)} · ${escapeHtml(row.status)}</option>`).join("");
+  app.innerHTML = `
+    ${pageHeader("Controlled local workflows", "Complete forms, evidence and verified certificates without changing imported records")}
+    <div class="local-workflow-boundary"><strong>Isolation boundary</strong><span>Every action on this page creates separately marked local-only data and an audit event. Imported customer records remain immutable.</span></div>
+    ${editable ? "" : `<div class="worker-profile-notice">Your Viewer role can inspect history but cannot create or change records.</div>`}
+    <section class="local-workflow-grid pilot-workflow-grid">
+      <article class="card workflow-card">
+        <div class="local-section-heading"><span>Assignments</span><h2>Create a local form assignment</h2><p>Uses an imported form definition without editing it.</p></div>
+        <form id="pilot-assignment-form"><label><span>Worker</span><select name="worker" required ${editable ? "" : "disabled"}>${workerOptions}</select></label><label><span>Form</span><select name="form" required ${editable ? "" : "disabled"}>${forms.map((form) => `<option>${escapeHtml(form.name)}</option>`).join("")}</select></label><label><span>Site reference</span><input name="sites" required ${editable ? "" : "disabled"} /></label><button class="button button-primary" ${editable ? "" : "disabled"}>Create assignment</button></form>
+        <div class="workflow-history"><strong>${localDistributions.length} local assignment${localDistributions.length === 1 ? "" : "s"}</strong>${localDistributions.slice(0, 6).map((row) => `<div class="workflow-history-row"><span>${escapeHtml(row.status)}</span><div><strong>${escapeHtml(row.worker)}</strong><small>${escapeHtml(row.form)}</small></div></div>`).join("") || `<p>No local assignments yet.</p>`}</div>
+      </article>
+      <article class="card workflow-card">
+        <div class="local-section-heading"><span>Documents</span><h2>Versioned document upload</h2><p>PDF, office, CSV and image files up to 10 MB.</p></div>
+        <form id="pilot-upload-form"><label><span>Document title</span><input name="title" required ${editable ? "" : "disabled"} /></label><label><span>File</span><input name="file" type="file" accept=".pdf,.csv,.xls,.xlsx,.doc,.docx,.png,.jpg,.jpeg" required ${editable ? "" : "disabled"} /></label><button class="button button-primary" ${editable ? "" : "disabled"}>Upload version</button></form>
+        <div class="workflow-history"><strong>${uploads.length} local version${uploads.length === 1 ? "" : "s"}</strong>${uploads.slice(0, 6).map((row) => `<a href="/local-files/uploads/${encodeURIComponent(row.stored_name)}" target="_blank" rel="noopener"><span>v${row.version}</span><div><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.original_name)} · ${formatBytes(row.size)}</small></div></a>`).join("") || `<p>No uploads yet.</p>`}</div>
+      </article>
+    </section>
+    <section class="card pilot-submission-card">
+      <div class="local-section-heading"><span>Rich submission</span><h2>Complete, save and submit a real form</h2><p>Drafts may be incomplete. Final submission validates every field and creates a PDF report.</p></div>
+      <label class="assignment-picker"><span>Local assignment</span><select id="pilot-assignment-picker" ${localDistributions.length ? "" : "disabled"}>${assignmentOptions}</select></label>
+      ${selectedDistribution && selectedForm ? `
+        <div class="submission-context"><div><span>Worker</span><strong>${escapeHtml(selectedDistribution.worker)}</strong></div><div><span>Form</span><strong>${escapeHtml(selectedDistribution.form)}</strong></div><div><span>Status</span><strong>${escapeHtml(selectedSubmission?.status || selectedDistribution.status)}</strong></div><div><span>Questions</span><strong>${formQuestions.length}</strong></div></div>
+        <form id="pilot-submission-form" data-submission-id="${selectedSubmission?.id || ""}"><div class="pilot-question-grid">${formQuestions.map((question) => pilotQuestionMarkup(question, existingAnswers[question.key], submitted || !editable)).join("")}</div>
+        <div class="evidence-panel"><div><strong>Supporting evidence</strong><small>${selectedEvidence.length} attached file${selectedEvidence.length === 1 ? "" : "s"}</small></div>${selectedEvidence.map((row) => `<a href="/local-files/evidence/${encodeURIComponent(row.stored_name)}" target="_blank" rel="noopener">${escapeHtml(row.original_name)}</a>`).join("") || `<span>No evidence attached.</span>`}${!submitted && editable ? `<label class="evidence-upload"><span>Add evidence</span><input id="pilot-evidence-file" type="file" accept=".pdf,.csv,.xls,.xlsx,.doc,.docx,.png,.jpg,.jpeg" /></label>` : ""}</div>
+        <div class="form-actions">${submitted ? `<a class="button button-primary" href="/local-files/reports/${encodeURIComponent(selectedSubmission.report_file)}" target="_blank" rel="noopener">Open submission PDF</a>` : `<button class="button button-secondary" type="button" data-submit-mode="draft" ${editable ? "" : "disabled"}>Save draft</button><button class="button button-primary" type="button" data-submit-mode="submitted" ${editable ? "" : "disabled"}>Submit final</button>`}</div></form>
+      ` : `<div class="empty-state"><strong>Create or select a local assignment</strong><span>The corresponding imported form definition will appear here.</span></div>`}
+    </section>
+    <section class="card pilot-certificate-card">
+      <div class="local-section-heading"><span>Certificates</span><h2>Issue and verify induction certificates</h2><p>Each PDF includes branding, an expiry date, unique number and scannable verification QR.</p></div>
+      <form id="pilot-certificate-form" class="certificate-form"><label><span>Company</span><input name="company" value="Kingscroft Developments" required ${editable ? "" : "disabled"} /></label><label><span>Worker</span><select name="worker" ${editable ? "" : "disabled"}>${workerOptions}</select></label><label><span>Induction</span><select name="induction" ${editable ? "" : "disabled"}>${inductions.map((induction) => `<option value="${escapeHtml(induction.title)}" data-site="${escapeHtml(induction.site)}">${escapeHtml(induction.title)}</option>`).join("")}</select></label><label><span>Validity</span><select name="validity_days" ${editable ? "" : "disabled"}><option value="365">1 year</option><option value="730">2 years</option><option value="1095">3 years</option></select></label><button class="button button-primary" ${editable ? "" : "disabled"}>Issue certificate</button></form>
+      <div class="certificate-register">${completions.map((row) => `<article><span class="status">${escapeHtml(row.status || "Active")}</span><div><strong>${escapeHtml(row.worker)}</strong><small>${escapeHtml(row.certificate_number || "Legacy local certificate")} · valid to ${escapeHtml(row.expires_at || "not recorded")}</small></div><div class="certificate-actions"><a href="/local-files/certificates/${encodeURIComponent(row.certificate_file)}" target="_blank" rel="noopener">PDF</a>${row.verification_url ? `<a href="${escapeHtml(row.verification_url)}" target="_blank" rel="noopener">Verify</a>` : ""}${row.status === "Active" && editable ? `<button type="button" data-replace-certificate="${row.id}">Replace</button>${canDeleteLocalRecords() ? `<button type="button" data-revoke-certificate="${row.id}">Revoke</button>` : ""}` : ""}</div></article>`).join("") || `<p>No local certificates yet.</p>`}</div>
+    </section>
+  `;
+  bindSignaturePads();
+  document.querySelector("#pilot-assignment-picker")?.addEventListener("change", async (event) => { selectedPilotAssignmentId = event.target.value; await renderPilotWorkflows(); });
+  if (!editable) return;
+  document.querySelector("#pilot-assignment-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    try {
+      const created = await api("/api/resources/distributions", { method: "POST", body: JSON.stringify({ ...values, assigned_date: localSnapshotDate(), submitted_date: "-", score: "-", status: "Pending", source: "local controlled workspace", local_only: true }) });
+      selectedPilotAssignmentId = String(created.id);
+      showToast("Local assignment created.");
+      await renderPilotWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#pilot-upload-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const file = form.get("file");
+    try {
+      const response = await fetch("/api/local/upload", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-CSRF-Token": state.auth.csrfToken, "X-Upload-Title": encodeURIComponent(form.get("title")), "X-File-Name": encodeURIComponent(file.name) }, body: file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Upload failed");
+      showToast("Document version uploaded.");
+      await renderPilotWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#pilot-evidence-file")?.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file || !selectedDistribution) return;
+    try {
+      const response = await fetch("/api/local/evidence", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-CSRF-Token": state.auth.csrfToken, "X-File-Name": encodeURIComponent(file.name), "X-Distribution-Id": String(selectedDistribution.id) }, body: file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Evidence upload failed");
+      showToast("Evidence attached locally.");
+      await renderPilotWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelectorAll("[data-submit-mode]").forEach((button) => button.addEventListener("click", async () => {
+    const submissionForm = document.querySelector("#pilot-submission-form");
+    const values = new FormData(submissionForm);
+    const answers = formQuestions.map((question) => ({ key: question.key, value: values.get(`answer_${question.key}`) || "" }));
+    try {
+      const result = await api("/api/local/submission", { method: "POST", body: JSON.stringify({ distribution_id: selectedDistribution.id, submission_id: submissionForm.dataset.submissionId || null, status: button.dataset.submitMode, answers, attachment_ids: selectedEvidence.map((row) => row.id) }) });
+      showToast(result.status === "Submitted" ? "Form submitted and PDF created." : "Draft saved.");
+      await renderPilotWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  }));
+  document.querySelector("#pilot-certificate-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const inductionSelect = event.currentTarget.elements.induction;
+    try {
+      await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ company: form.get("company"), worker: form.get("worker"), induction: form.get("induction"), validity_days: form.get("validity_days"), site: inductionSelect.selectedOptions[0]?.dataset.site || "" }) });
+      showToast("Verified certificate issued.");
+      await renderPilotWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelectorAll("[data-revoke-certificate]").forEach((button) => button.addEventListener("click", async () => {
+    const reason = window.prompt("Reason for revocation:");
+    if (!reason) return;
+    try { await api(`/api/local/certificate/${button.dataset.revokeCertificate}/revoke`, { method: "POST", body: JSON.stringify({ reason }) }); showToast("Certificate revoked."); await renderPilotWorkflows(); } catch (error) { showToast(error.message, "error"); }
+  }));
+  document.querySelectorAll("[data-replace-certificate]").forEach((button) => button.addEventListener("click", async () => {
+    const prior = completions.find((row) => String(row.id) === button.dataset.replaceCertificate);
+    if (!prior) return;
+    try { await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ company: prior.company, worker: prior.worker, induction: prior.induction, site: prior.site, validity_days: 365, replaces_id: prior.id }) }); showToast("Replacement issued; previous certificate marked replaced."); await renderPilotWorkflows(); } catch (error) { showToast(error.message, "error"); }
+  }));
+}
+
 function applyAuthContext() {
   const user = state.auth.user || {};
   const name = user.name || "Local user";
@@ -3348,6 +3586,7 @@ function renderAuthScreen(setupRequired) {
         ${setupRequired ? `<label><span>Confirm password</span><input name="confirm" type="password" autocomplete="new-password" minlength="12" required /></label>` : ""}
         <div class="auth-error" id="auth-error" role="alert"></div>
         <button class="button button-primary" type="submit">${setupRequired ? "Create administrator" : "Sign in"}</button>
+        ${setupRequired ? "" : `<button class="auth-text-button" id="forgot-password" type="button">Forgot your password?</button>`}
       </form>
       <small>Protected by the outer gateway and application-level session security.</small>
     </section>
@@ -3377,6 +3616,52 @@ function renderAuthScreen(setupRequired) {
       error.textContent = authError.message;
     }
   });
+  document.querySelector("#forgot-password")?.addEventListener("click", renderRecoveryRequest);
+}
+
+function renderRecoveryRequest() {
+  document.body.classList.add("auth-screen");
+  app.innerHTML = `
+    <section class="auth-panel" aria-labelledby="recovery-title">
+      <div class="auth-brand"><img src="/static/favicon.svg" alt="" /><span>Kompliance</span></div>
+      <span class="auth-eyebrow">Account recovery</span><h1 id="recovery-title">Request a password reset</h1>
+      <p>The request is recorded locally. An administrator must securely deliver the prepared reset link; no external email is sent automatically.</p>
+      <form id="recovery-form"><label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><div class="auth-error" id="auth-error"></div><button class="button button-primary">Prepare reset request</button><button class="auth-text-button" id="back-to-login" type="button">Back to sign in</button></form>
+    </section>`;
+  setLoading(false);
+  document.querySelector("#back-to-login").addEventListener("click", () => renderAuthScreen(false));
+  document.querySelector("#recovery-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const result = await api("/api/auth/recovery/request", { method: "POST", body: JSON.stringify({ email: form.get("email") }) });
+      document.querySelector("#auth-error").textContent = result.message;
+      event.currentTarget.reset();
+    } catch (error) { document.querySelector("#auth-error").textContent = error.message; }
+  });
+}
+
+function renderPasswordReset() {
+  const token = new URLSearchParams(window.location.search).get("token") || "";
+  document.body.classList.add("auth-screen");
+  app.innerHTML = `
+    <section class="auth-panel" aria-labelledby="reset-title">
+      <div class="auth-brand"><img src="/static/favicon.svg" alt="" /><span>Kompliance</span></div>
+      <span class="auth-eyebrow">Secure reset</span><h1 id="reset-title">Choose a new password</h1><p>This one-time link expires after 30 minutes and signs out every existing session.</p>
+      <form id="reset-form"><label><span>New password</span><input name="password" type="password" minlength="12" autocomplete="new-password" required /></label><label><span>Confirm password</span><input name="confirm" type="password" minlength="12" autocomplete="new-password" required /></label><div class="auth-error" id="auth-error"></div><button class="button button-primary">Reset password</button></form>
+    </section>`;
+  setLoading(false);
+  document.querySelector("#reset-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    if (form.get("password") !== form.get("confirm")) { document.querySelector("#auth-error").textContent = "Passwords do not match."; return; }
+    try {
+      await api("/api/auth/recovery/reset", { method: "POST", body: JSON.stringify({ token, password: form.get("password") }) });
+      history.replaceState({}, "", "/");
+      renderAuthScreen(false);
+      showToast("Password reset. Sign in with the new password.");
+    } catch (error) { document.querySelector("#auth-error").textContent = error.message; }
+  });
 }
 
 async function initializeAuth() {
@@ -3391,7 +3676,8 @@ async function initializeAuth() {
       csrfToken: status.csrf_token || "",
     };
     if (state.auth.enabled && (!state.auth.authenticated || state.auth.setupRequired)) {
-      renderAuthScreen(state.auth.setupRequired);
+      if (window.location.pathname === "/reset-password" && !state.auth.setupRequired) renderPasswordReset();
+      else renderAuthScreen(state.auth.setupRequired);
       return;
     }
     document.body.classList.remove("auth-screen");
@@ -3429,6 +3715,35 @@ function renderContact() {
   });
 }
 
+async function renderComplianceCentre(days = 30) {
+  const [result, notificationResult] = await Promise.all([
+    api(`/api/compliance/reminders?days=${days}`),
+    api("/api/resources/local_notifications?limit=5000"),
+  ]);
+  const counts = result.counts || {};
+  const rows = result.data || [];
+  const notifications = (notificationResult.data || []).filter((row) => row.kind === "compliance_reminder");
+  app.innerHTML = `
+    ${pageHeader("Expiry centre", "Upcoming and overdue compliance records")}
+    <section class="expiry-summary-grid">
+      <article class="expiry-overdue"><span>Overdue</span><strong>${Number(counts.overdue || 0).toLocaleString()}</strong><small>Requires review</small></article>
+      <article class="expiry-due"><span>Due within ${days} days</span><strong>${Number(counts.due_soon || 0).toLocaleString()}</strong><small>Reminder window</small></article>
+      <article><span>Current</span><strong>${Number(counts.current || 0).toLocaleString()}</strong><small>Beyond the window</small></article>
+      <article><span>Date missing</span><strong>${Number(counts.missing_date || 0).toLocaleString()}</strong><small>Source has no parseable date</small></article>
+    </section>
+    <section class="card expiry-controls"><label><span>Reminder window</span><select id="expiry-days">${[7, 14, 30, 60, 90].map((value) => `<option value="${value}" ${value === days ? "selected" : ""}>${value} days</option>`).join("")}</select></label><button class="button button-primary" id="prepare-reminders" ${canEditLocalRecords() ? "" : "disabled"}>Prepare due reminders</button><span>${notifications.length} prepared notification${notifications.length === 1 ? "" : "s"}; none sent automatically</span></section>
+    <section class="card table-card"><div class="table-scroll"><table class="data-table"><thead><tr><th>State</th><th>Category</th><th>Subject</th><th>Site</th><th>Due date</th><th>Days</th></tr></thead><tbody>${rows.map((row) => `<tr><td><span class="status expiry-${row.state.toLowerCase().replace(/\s/g, "-")}">${escapeHtml(row.state)}</span></td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.subject)}</td><td>${escapeHtml(row.site || "—")}</td><td>${escapeHtml(row.due_date)}</td><td>${Number(row.days_remaining)}</td></tr>`).join("") || `<tr><td colspan="6" class="table-empty">No dated compliance records found.</td></tr>`}</tbody></table></div></section>
+  `;
+  document.querySelector("#expiry-days").addEventListener("change", (event) => renderComplianceCentre(Number(event.target.value)));
+  document.querySelector("#prepare-reminders").addEventListener("click", async () => {
+    try {
+      const prepared = await api("/api/compliance/notifications/prepare", { method: "POST", body: JSON.stringify({ days }) });
+      showToast(`${prepared.created} reminder${prepared.created === 1 ? "" : "s"} prepared; no external messages sent.`);
+      await renderComplianceCentre(days);
+    } catch (error) { showToast(error.message, "error"); }
+  });
+}
+
 async function route() {
   setLoading(true);
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -3453,7 +3768,9 @@ async function route() {
     } else if (path === "/users") {
       await renderUserManagement();
     } else if (path === "/local-workflows") {
-      await renderLocalWorkflows();
+      await renderPilotWorkflows();
+    } else if (path === "/compliance") {
+      await renderComplianceCentre();
     } else if (path === "/contact-us") {
       renderContact();
     } else {

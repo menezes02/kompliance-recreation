@@ -5196,3 +5196,272 @@ body.auth-screen .app-shell {
     padding: 14px;
   }
 }
+
+.pilot-workflow-grid {
+  margin-bottom: 20px;
+}
+
+.pilot-submission-card,
+.pilot-certificate-card {
+  margin-bottom: 20px;
+  padding: 24px;
+}
+
+.assignment-picker {
+  display: grid;
+  gap: 7px;
+  max-width: 760px;
+  margin: 20px 0;
+}
+
+.submission-context {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.submission-context div,
+.expiry-summary-grid article {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8fbfa;
+}
+
+.submission-context span,
+.expiry-summary-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.pilot-question-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.pilot-question {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.pilot-question > span {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.pilot-question > span b {
+  color: #b72f45;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.pilot-question small {
+  min-height: 30px;
+  color: var(--muted);
+}
+
+.signature-pad canvas {
+  width: 100%;
+  height: 120px;
+  border: 1px dashed #9cb1bb;
+  border-radius: 10px;
+  background: #fbfdfd;
+  touch-action: none;
+}
+
+.signature-pad .signature-clear {
+  margin-top: 7px;
+}
+
+.signature-readout {
+  padding: 18px;
+  border-radius: 10px;
+  background: #edf7f3;
+  color: #0d745d;
+  font-weight: 700;
+}
+
+.evidence-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8fbfa;
+}
+
+.evidence-panel > div {
+  margin-right: auto;
+}
+
+.evidence-panel small,
+.evidence-panel strong {
+  display: block;
+}
+
+.evidence-panel a,
+.certificate-actions a,
+.certificate-actions button,
+.user-actions button {
+  border: 0;
+  background: #e8f3ef;
+  color: #0b725b;
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+  font-weight: 700;
+}
+
+.evidence-upload {
+  cursor: pointer;
+}
+
+.certificate-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.certificate-form label,
+.expiry-controls label {
+  display: grid;
+  gap: 7px;
+}
+
+.certificate-register {
+  display: grid;
+  gap: 8px;
+}
+
+.certificate-register article {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+
+.certificate-register small,
+.certificate-register strong {
+  display: block;
+}
+
+.certificate-actions,
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.auth-text-button {
+  border: 0;
+  background: transparent;
+  color: #0d745d;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.user-inline-name {
+  min-width: 150px;
+}
+
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.expiry-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.expiry-summary-grid strong {
+  display: block;
+  font-size: 30px;
+}
+
+.expiry-summary-grid .expiry-overdue {
+  border-color: #f1bbc1;
+  background: #fff4f5;
+}
+
+.expiry-summary-grid .expiry-due {
+  border-color: #f0d69b;
+  background: #fffaeb;
+}
+
+.expiry-controls {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.expiry-controls > span {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.expiry-overdue {
+  color: #ad2d42;
+}
+
+.expiry-due-soon {
+  color: #956710;
+}
+
+@media (max-width: 900px) {
+  .submission-context,
+  .expiry-summary-grid,
+  .certificate-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pilot-question-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .submission-context,
+  .expiry-summary-grid,
+  .certificate-form {
+    grid-template-columns: 1fr;
+  }
+
+  .certificate-register article {
+    grid-template-columns: 1fr;
+  }
+
+  .expiry-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .expiry-controls > span {
+    margin-left: 0;
+  }
+}

@@ -102,8 +102,12 @@ presentation/action HTML are not stored in the snapshot.
 - Read-only previews for all 3 imported custom-form definitions, linked to their distribution counts
 - Worker profiles connected to exact-match available site induction definitions without inferring completion
 - Optional application login with administrator/editor/viewer enforcement, CSRF-protected sessions and a local audit log; enabled by default in Docker
-- Controlled local workflow workspace for versioned uploads, form assignments, response capture and generated induction-certificate PDFs
-- Administrator access-management screen for creating viewer, editor and administrator accounts
+- Controlled local workflow workspace with real imported form definitions, draft/resume, final required-field validation, signature pads, evidence attachments and complete submission PDFs
+- Branded induction certificates with unique numbers, expiry dates, scannable verification QR codes, public status pages, replacement history and revocation
+- Expiry centre covering Safe Pass, GA1, risk-assessment and local-certificate dates, with configurable windows and local notification preparation
+- Administrator access management for roles, suspension, session revocation and secure one-time reset-link preparation
+- Password recovery with generic account-safe responses, 30-minute one-time tokens and automatic session revocation
+- Five-attempt login lockout with a 15-minute cooling period
 - Read-only shared-document hub with metadata filters, provenance, available version history and PDF preview/download
 - GA1 and Risk Assessment document-set metadata
 - Visual multi-page induction builder with seven mapped structural examples
@@ -132,9 +136,9 @@ missing files, zero empty files, and zero invalid PDF signatures.
 Stop the server and remove `data/kompliance.db`, then start the server again.
 The seed records will be recreated.
 
-## Next implementation areas
+## Pilot boundaries
 
-- Rich form response field rendering and attachment evidence capture
-- Certificate branding and digital verification
-- Document expiry processing and notification scheduling
-- Password reset and account recovery
+- Prepared reminder and password-reset messages are stored locally but are not sent externally.
+- SMTP or transactional-email delivery requires an approved provider, sender domain and data-processing decision.
+- Company logo artwork can replace the current text-based certificate brand after approval.
+- Production deployment remains gated by `../RELEASE_CHECKLIST.md`.

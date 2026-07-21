@@ -27,6 +27,7 @@ environment values documented in `.env.example`.
 ## Run locally
 
 ```powershell
+python -m pip install -r requirements.txt
 python local-app/server.py
 ```
 

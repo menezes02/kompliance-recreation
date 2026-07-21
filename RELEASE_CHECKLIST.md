@@ -50,7 +50,14 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] An archived PDF opens in the browser viewer and can be downloaded.
 - [ ] Induction, asset QR, training, and custom-form views load.
 - [ ] A local-only assignment and submission can be created by an authorised role.
-- [ ] A local certificate PDF can be generated and opened.
+- [ ] A real form definition can be saved as a draft, completed, signed, and submitted.
+- [ ] Evidence can be attached only to the matching local assignment.
+- [ ] A completed submission report PDF can be generated and opened.
+- [ ] A local certificate PDF can be generated, publicly verified, replaced, and revoked.
+- [ ] The expiry centre classifies overdue, due-soon, current, and missing-date records.
+- [ ] Reminder preparation creates local notification records and sends nothing automatically.
+- [ ] Password recovery tokens expire, work once, and revoke prior sessions.
+- [ ] Five failed logins lock the account for the configured period.
 - [ ] Audit events appear for authenticated mutations.
 - [ ] No imported source record can be edited or deleted.
 

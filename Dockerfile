@@ -8,6 +8,9 @@ RUN groupadd --gid 10001 kompliance \
 
 WORKDIR /app
 
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --requirement /app/requirements.txt
+
 COPY --chown=10001:10001 local-app /app/local-app
 COPY --chown=10001:10001 examples /app/examples
 COPY --chown=10001:10001 production-data /app/production-data
