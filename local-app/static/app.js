@@ -37,6 +37,8 @@ const LIST_ROUTES = {
     resource: "workers",
     title: "Worker",
     addLabel: "Add Worker",
+    viewMode: "worker",
+    filterMode: "workers",
     columns: [
       ["worker_id", "Worker ID"],
       ["name", "Name"],
@@ -98,10 +100,12 @@ const LIST_ROUTES = {
     resource: "training",
     title: "Training Questions",
     addLabel: "Add Question",
+    allowCreate: false,
+    viewMode: "training",
+    filterMode: "training",
     columns: [
       ["question", "Question"],
-      ["created_at", "Created At", "date"],
-      ["updated_at", "Updated At", "date"],
+      ["expiry_date", "Snapshot Expiry Indicator", "status"],
     ],
     fields: [{ name: "question", label: "Question", required: true, full: true }],
   },
@@ -109,13 +113,16 @@ const LIST_ROUTES = {
     resource: "forms",
     title: "Forms",
     addLabel: "Add Form",
+    allowCreate: false,
+    viewMode: "form_definition",
+    filterMode: "forms",
     columns: [
       ["name", "Name"],
       ["assigned_sites", "Assigned Sites"],
       ["assigned_roles", "Assigned Roles"],
       ["status", "Status", "status"],
-      ["created_at", "Created At", "date"],
-      ["updated_at", "Updated At", "date"],
+      ["definition", "Structure", "formstructure"],
+      ["qr_archive_path", "QR", "qrstate"],
     ],
     fields: [
       { name: "name", label: "Form Name", required: true, full: true },
@@ -139,6 +146,11 @@ const LIST_ROUTES = {
     resource: "distributions",
     title: "Form Distributions",
     addLabel: "Assign Form",
+    allowCreate: false,
+    viewMode: "distribution",
+    filterMode: "distributions",
+    filterDateKey: "assigned_date",
+    filterDateLabel: "Assigned date",
     columns: [
       ["worker", "Worker Name"],
       ["sites", "Assigned Sites"],
@@ -165,12 +177,15 @@ const LIST_ROUTES = {
     resource: "assets",
     title: "Assets",
     addLabel: "Add Assets",
+    allowCreate: false,
+    viewMode: "asset",
+    filterMode: "assets",
     columns: [
+      ["company", "Company"],
       ["subcontractor", "Subcontractor Name"],
       ["name", "Asset Name"],
       ["asset_id", "Asset ID"],
-      ["created_at", "Created At", "date"],
-      ["updated_at", "Updated At", "date"],
+      ["qr_archive_path", "QR", "qrstate"],
     ],
     fields: [
       { name: "asset_id", label: "Appliance ID", required: true },
@@ -182,12 +197,16 @@ const LIST_ROUTES = {
     resource: "documents",
     title: "Documents",
     addLabel: "Add Document",
+    allowCreate: false,
+    filterMode: "documents",
+    viewMode: "document",
     columns: [
-      ["subcontractor", "Subcontractor Name"],
       ["title", "Title"],
-      ["file_name", "Document"],
-      ["type", "Type"],
-      ["created_at", "Created At", "date"],
+      ["company", "Company"],
+      ["subcontractor", "Subcontractor"],
+      ["file_name", "Original Filename"],
+      ["archive_path", "File Type", "filetype"],
+      ["archive_path", "Archived File", "archive"],
     ],
     fields: [
       { name: "title", label: "Title", required: true },
@@ -213,12 +232,16 @@ const LIST_ROUTES = {
     resource: "inductions",
     title: "Induction Forms",
     addLabel: "Create Induction Form",
+    allowCreate: false,
+    viewMode: "induction",
+    filterMode: "inductions",
     columns: [
       ["title", "Title"],
       ["site", "Site"],
       ["submissions", "Submissions"],
       ["status", "Status", "status"],
-      ["created_at", "Created", "date"],
+      ["pages", "Pages", "pagecount"],
+      ["pages", "Questions", "questioncount"],
     ],
     fields: [
       { name: "title", label: "Induction Title", required: true },
@@ -245,6 +268,7 @@ function hsaConfig(resource, title) {
     resource,
     title,
     addLabel: "Add Local Example",
+    allowCreate: false,
     filterMode: "hsa",
     columns: [
       ["subcontractor", "Subcontractor Name"],
@@ -266,6 +290,8 @@ function hsaConfig(resource, title) {
 }
 
 function documentSetConfig(resource, title, addLabel) {
+  const isGa1 = resource === "ga1";
+  const isRiskAssessment = resource === "risk_assessment";
   const columns = [
     ["title", "Title"],
     ["company", "Company Name"],
@@ -274,13 +300,18 @@ function documentSetConfig(resource, title, addLabel) {
     ["expiry_date", "Expiry Date"],
     ["expiry_status", "Expiry Status", "status"],
   ];
-  if (resource === "ga1") {
+  if (isGa1) {
     columns.push(["archive_paths", "Documents", "archives"]);
   }
   return {
     resource,
     title,
     addLabel,
+    allowCreate: false,
+    filterMode: isGa1 ? "ga1" : isRiskAssessment ? "risk_assessment" : "",
+    viewMode: isRiskAssessment ? "risk_assessment" : "",
+    filterDateKey: isGa1 || isRiskAssessment ? "expiry_date" : "",
+    filterDateLabel: isGa1 || isRiskAssessment ? "Expiry date" : "",
     columns,
     fields: [
       { name: "title", label: "Title", required: true },
@@ -323,12 +354,29 @@ dashboardCards.forEach((card, index) => {
 });
 
 const state = {
+  auth: {
+    enabled: false,
+    authenticated: true,
+    setupRequired: false,
+    user: { name: "Local Administrator", email: "local@kompliance.test", role: "admin" },
+    csrfToken: "",
+  },
   search: "",
   pageSize: 10,
   page: 1,
   listFilters: {
     site: "",
     worker: "",
+    expiryState: "",
+    role: "",
+    accountStatus: "",
+    safePass: "",
+    company: "",
+    subcontractor: "",
+    fileType: "",
+    formName: "",
+    workflowStatus: "",
+    recordStatus: "",
     dateStart: "",
     dateEnd: "",
     order: "newest",
@@ -339,16 +387,61 @@ const state = {
   currentRows: [],
 };
 
+function defaultListFilters(config = {}) {
+  return {
+    site: "",
+    worker: "",
+    expiryState: "",
+    role: "",
+    accountStatus: "",
+    safePass: "",
+    company: "",
+    subcontractor: "",
+    fileType: "",
+    formName: "",
+    workflowStatus: "",
+    recordStatus: "",
+    dateStart: "",
+    dateEnd: "",
+    order: ["ga1", "risk_assessment"].includes(config.filterMode)
+      ? "expiry_soonest"
+      : config.filterMode === "workers"
+        ? "name_asc"
+      : config.filterMode === "documents"
+          ? "title_asc"
+        : ["inductions", "assets", "training", "forms"].includes(config.filterMode)
+          ? "title_asc"
+        : "newest",
+  };
+}
+
 async function api(url, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
   const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(method !== "GET" && state.auth.csrfToken ? { "X-CSRF-Token": state.auth.csrfToken } : {}),
+      ...(options.headers || {}),
+    },
     ...options,
   });
   if (!response.ok) {
-    const message = await response.text();
+    const responseText = await response.text();
+    let message = responseText;
+    try {
+      message = JSON.parse(responseText).error || responseText;
+    } catch {}
     throw new Error(message || `Request failed with ${response.status}`);
   }
   return response.json();
+}
+
+function canEditLocalRecords() {
+  return ["editor", "admin"].includes(state.auth.user?.role || "");
+}
+
+function canDeleteLocalRecords() {
+  return state.auth.user?.role === "admin";
 }
 
 function escapeHtml(value) {
@@ -385,16 +478,27 @@ function isPdfPath(value) {
   return /\.pdf$/i.test(String(value || ""));
 }
 
+function isImagePath(value) {
+  return /\.(?:jpe?g|png|webp)$/i.test(String(value || ""));
+}
+
+function fileTypeForPath(value) {
+  const match = String(value || "").match(/\.([a-z0-9]+)$/i);
+  return match ? match[1].toUpperCase() : "Unknown";
+}
+
 function archiveDocumentLink(value) {
   const href = archiveHref(value);
   if (!href) return "";
   const fileName = String(value).replaceAll("\\", "/").split("/").pop();
   const previewAttributes = isPdfPath(value)
     ? `data-pdf-preview data-pdf-name="${escapeHtml(fileName)}"`
-    : "";
+    : isImagePath(value)
+      ? `data-image-preview data-image-name="${escapeHtml(fileName)}"`
+      : "";
   return `
     <a class="document-link" href="${escapeHtml(href)}" target="_blank" rel="noopener"
-       ${previewAttributes} title="${isPdfPath(value) ? "Preview" : "Open"} ${escapeHtml(fileName)}">
+       ${previewAttributes} title="${isPdfPath(value) || isImagePath(value) ? "Preview" : "Open"} ${escapeHtml(fileName)}">
       <span aria-hidden="true">↗</span>
       ${escapeHtml(fileName)}
     </a>
@@ -426,9 +530,10 @@ function displayDate(value) {
   }).format(new Date(timestamp));
 }
 
-function selectedDateLabel() {
+function selectedDateLabel(config = {}) {
   const { dateStart, dateEnd } = state.listFilters;
-  if (!dateStart) return "All submitted dates";
+  const label = config.filterDateLabel || "Submitted date";
+  if (!dateStart) return `All ${label.toLowerCase()}s`;
   if (!dateEnd || dateEnd === dateStart) return displayDate(dateStart);
   return `${displayDate(dateStart)} – ${displayDate(dateEnd)}`;
 }
@@ -502,23 +607,168 @@ function uniqueValues(rows, key) {
   ].sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" }));
 }
 
+function splitWorkerValues(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item && item !== "-");
+}
+
+function uniqueWorkerValues(rows, key) {
+  return [...new Set(rows.flatMap((row) => splitWorkerValues(row[key])))]
+    .filter((value) => !value.endsWith("..."))
+    .sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" }));
+}
+
+function expiryStateForRow(row) {
+  const expiry = dateValue(row.expiry_date);
+  if (!expiry) return "not_applicable";
+  const todayText = new Date().toISOString().slice(0, 10);
+  const today = dateValue(todayText);
+  if (expiry < today) return "expired";
+  if (expiry <= today + 30 * 24 * 60 * 60 * 1000) return "due_soon";
+  return "active";
+}
+
+function expiryStateLabel(value) {
+  return {
+    active: "Valid",
+    due_soon: "Due within 30 days",
+    expired: "Expired",
+    not_applicable: "No expiry date",
+  }[value] || "Unknown";
+}
+
+function expiryTimingLabel(value) {
+  const expiry = dateValue(value);
+  if (!expiry) return "No expiry date";
+  const today = dateValue(new Date().toISOString().slice(0, 10));
+  const days = Math.round((expiry - today) / (24 * 60 * 60 * 1000));
+  if (days < 0) return `Expired ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago`;
+  if (days === 0) return "Expires today";
+  return `Expires in ${days} day${days === 1 ? "" : "s"}`;
+}
+
 function applyListFilters(rows, config) {
-  if (config.filterMode !== "hsa") return [...rows];
-  const { site, worker, dateStart, dateEnd, order } = state.listFilters;
+  if (!config.filterMode) return [...rows];
+  const {
+    site,
+    worker,
+    expiryState,
+    role,
+    accountStatus,
+    safePass,
+    company,
+    subcontractor,
+    fileType,
+    formName,
+    workflowStatus,
+    recordStatus,
+    dateStart,
+    dateEnd,
+    order,
+  } = state.listFilters;
   const fromValue = dateValue(dateStart);
   const toValue = dateValue(dateEnd || dateStart);
+  const dateKey = config.filterDateKey || "submitted_date";
   const filtered = rows.filter(
     (row) => {
-      const submittedValue = dateValue(row.submitted_date);
+      const rowDateValue = dateValue(row[dateKey]);
+      if (config.filterMode === "workers") {
+        return (
+          (!site || splitWorkerValues(row.sites).includes(site)) &&
+          (!role || splitWorkerValues(row.roles).includes(role)) &&
+          (!accountStatus || row.status === accountStatus) &&
+          (!safePass || row.safe_pass_expiry === safePass)
+        );
+      }
+      if (config.filterMode === "documents") {
+        const rowFileType = fileTypeForPath(row.archive_path || row.file_name);
+        return (
+          (!company || row.company === company) &&
+          (!subcontractor || row.subcontractor === subcontractor) &&
+          (!fileType || rowFileType === fileType)
+        );
+      }
+      if (config.filterMode === "distributions") {
+        return (
+          (!site || row.sites === site) &&
+          (!worker || row.worker === worker) &&
+          (!formName || row.form === formName) &&
+          (!workflowStatus || row.status === workflowStatus) &&
+          (!fromValue || rowDateValue >= fromValue) &&
+          (!toValue || rowDateValue <= toValue)
+        );
+      }
+      if (config.filterMode === "inductions") {
+        return (
+          (!site || row.site === site) &&
+          (!recordStatus || row.status === recordStatus)
+        );
+      }
+      if (config.filterMode === "assets") {
+        return (
+          (!company || row.company === company) &&
+          (!subcontractor || row.subcontractor === subcontractor)
+        );
+      }
+      if (config.filterMode === "training") {
+        return !recordStatus || row.expiry_date === recordStatus;
+      }
+      if (config.filterMode === "forms") {
+        return !recordStatus || row.status === recordStatus;
+      }
       return (
         (!site || row.site === site) &&
-        (!worker || row.worker === worker) &&
-        (!fromValue || submittedValue >= fromValue) &&
-        (!toValue || submittedValue <= toValue)
+        (config.filterMode !== "hsa" || !worker || row.worker === worker) &&
+        (!["ga1", "risk_assessment"].includes(config.filterMode) || !expiryState || expiryStateForRow(row) === expiryState) &&
+        (config.filterMode !== "risk_assessment" || !company || row.company === company) &&
+        (config.filterMode !== "risk_assessment" || !subcontractor || row.subcontractor === subcontractor) &&
+        (!fromValue || rowDateValue >= fromValue) &&
+        (!toValue || rowDateValue <= toValue)
       );
     },
   );
   return filtered.sort((left, right) => {
+    if (config.filterMode === "documents") {
+      const comparison = String(left.title || "").localeCompare(String(right.title || ""), "en", {
+        sensitivity: "base",
+      });
+      return order === "title_desc" ? -comparison : comparison;
+    }
+    if (config.filterMode === "workers") {
+      const comparison = String(left.name || "").localeCompare(String(right.name || ""), "en", {
+        sensitivity: "base",
+      });
+      return order === "name_desc" ? -comparison : comparison;
+    }
+    if (["ga1", "risk_assessment"].includes(config.filterMode)) {
+      const leftExpiry = dateValue(left.expiry_date) || Number.MAX_SAFE_INTEGER;
+      const rightExpiry = dateValue(right.expiry_date) || Number.MAX_SAFE_INTEGER;
+      const difference = leftExpiry - rightExpiry;
+      const fallback = Number(left.source_id || left.id) - Number(right.source_id || right.id);
+      const comparison = difference || fallback;
+      return order === "expiry_latest" ? -comparison : comparison;
+    }
+    if (config.filterMode === "distributions") {
+      const leftAssigned = dateValue(left.assigned_date);
+      const rightAssigned = dateValue(right.assigned_date);
+      const difference = leftAssigned - rightAssigned;
+      const fallback = Number(left.source_id || left.id) - Number(right.source_id || right.id);
+      const comparison = difference || fallback;
+      return order === "oldest" ? comparison : -comparison;
+    }
+    if (["inductions", "assets", "training", "forms"].includes(config.filterMode)) {
+      const key = config.filterMode === "inductions"
+        ? "title"
+        : config.filterMode === "training"
+          ? "question"
+          : "name";
+      const comparison = String(left[key] || "").localeCompare(String(right[key] || ""), "en", {
+        sensitivity: "base",
+      });
+      return order === "title_desc" ? -comparison : comparison;
+    }
     const difference = dateValue(left.created_at) - dateValue(right.created_at);
     const fallback = Number(left.source_id || left.id) - Number(right.source_id || right.id);
     const comparison = difference || fallback;
@@ -528,9 +778,27 @@ function applyListFilters(rows, config) {
 
 function renderCell(value, format) {
   if (format === "date") return formatDate(value);
+  if (format === "filetype") return `<span class="file-type-badge">${escapeHtml(fileTypeForPath(value))}</span>`;
   if (format === "status") {
     const status = String(value || "Pending");
     return `<span class="status ${escapeHtml(status.toLowerCase().replaceAll(" ", "-"))}">${escapeHtml(status)}</span>`;
+  }
+  if (format === "pagecount") {
+    return String(value?.pages?.length || 0);
+  }
+  if (format === "questioncount") {
+    const pages = Array.isArray(value?.pages) ? value.pages : [];
+    return String(pages.reduce((total, page) => total + (page.blocks || []).filter((block) => block.type === "question").length, 0));
+  }
+  if (format === "formstructure") {
+    const sections = Array.isArray(value?.sections) ? value.sections : [];
+    const questions = sections.reduce((total, section) => total + (section.questions || []).length, 0);
+    return `${sections.length} section${sections.length === 1 ? "" : "s"} · ${questions} question${questions === 1 ? "" : "s"}`;
+  }
+  if (format === "qrstate") {
+    return value
+      ? `<span class="qr-state available">Available</span>`
+      : `<span class="qr-state unavailable">Not archived</span>`;
   }
   if (format === "archive") {
     return archiveDocumentLink(value) || "—";
@@ -601,6 +869,679 @@ function openPdfPreview(href, fileName) {
   modalRoot.querySelector(".pdf-preview-close").focus();
 }
 
+function openImagePreview(href, fileName) {
+  const safeHref = escapeHtml(href);
+  const safeName = escapeHtml(fileName || "Archived image");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop pdf-preview-backdrop image-preview-backdrop">
+      <section class="pdf-preview-modal image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="image-preview-title">
+        <header class="pdf-preview-header">
+          <div class="pdf-preview-title">
+            <span class="pdf-badge image-badge">IMG</span>
+            <div>
+              <small>Archived compliance image</small>
+              <h2 id="image-preview-title">${safeName}</h2>
+            </div>
+          </div>
+          <div class="pdf-preview-actions">
+            <a class="button button-secondary" href="${safeHref}" target="_blank" rel="noopener">Open in new tab</a>
+            <a class="button button-primary" href="${safeHref}" download="${safeName}">Download image</a>
+            <button class="pdf-preview-close" type="button" aria-label="Close image preview">×</button>
+          </div>
+        </header>
+        <div class="image-preview-body">
+          <img src="${safeHref}" alt="Preview of ${safeName}" />
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".image-preview-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("image-preview-backdrop")) close();
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
+function recordDocumentPaths(record) {
+  return [
+    ...(Array.isArray(record.archive_paths) ? record.archive_paths : []),
+    record.archive_path,
+  ].filter((path, index, paths) => path && paths.indexOf(path) === index);
+}
+
+function openDocumentSetViewer(record) {
+  const paths = recordDocumentPaths(record);
+  const files = paths.length
+    ? paths
+        .map((path, index) => {
+          const href = archiveHref(path);
+          const fileName = String(path).replaceAll("\\", "/").split("/").pop();
+          const kind = isPdfPath(path) ? "PDF" : isImagePath(path) ? "Image" : "File";
+          const preview = isPdfPath(path) || isImagePath(path)
+            ? `<button class="button button-secondary" type="button" data-set-preview="${escapeHtml(href)}"
+                       data-set-file="${escapeHtml(fileName)}" data-set-kind="${kind.toLowerCase()}">Preview</button>`
+            : "";
+          return `
+            <article class="document-set-file">
+              <span class="document-set-file-number">${index + 1}</span>
+              <div class="document-set-file-copy">
+                <small>${kind}</small>
+                <strong>${escapeHtml(fileName)}</strong>
+              </div>
+              <div class="document-set-file-actions">
+                ${preview}
+                <a class="button button-quiet" href="${escapeHtml(href)}" target="_blank" rel="noopener">Open</a>
+                <a class="button button-primary" href="${escapeHtml(href)}" download="${escapeHtml(fileName)}">Download</a>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `<p class="document-set-empty">No archived files are linked to this record.</p>`;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop document-set-backdrop">
+      <section class="document-set-modal" role="dialog" aria-modal="true" aria-labelledby="document-set-title">
+        <header class="document-set-header">
+          <div>
+            <small>GA1 document set · read only</small>
+            <h2 id="document-set-title">${escapeHtml(record.title || "Untitled document set")}</h2>
+          </div>
+          <button class="pdf-preview-close" type="button" aria-label="Close document set">×</button>
+        </header>
+        <div class="document-set-content">
+          <dl class="document-set-summary">
+            <div><dt>Company</dt><dd>${escapeHtml(record.company || "—")}</dd></div>
+            <div><dt>Site</dt><dd>${escapeHtml(record.site || "—")}</dd></div>
+            <div><dt>Subcontractor</dt><dd>${escapeHtml(record.subcontractor || "—")}</dd></div>
+            <div><dt>Expiry date</dt><dd>${escapeHtml(formatDate(record.expiry_date) || "—")}</dd></div>
+            <div><dt>Snapshot status</dt><dd>${escapeHtml(record.expiry_status || "—")}</dd></div>
+            <div><dt>Documents</dt><dd>${paths.length}</dd></div>
+          </dl>
+          <div class="document-set-files">${files}</div>
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".document-set-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("document-set-backdrop")) close();
+  });
+  modalRoot.querySelectorAll("[data-set-preview]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.setKind === "pdf") {
+        openPdfPreview(button.dataset.setPreview, button.dataset.setFile);
+      } else {
+        openImagePreview(button.dataset.setPreview, button.dataset.setFile);
+      }
+    });
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
+function openSharedDocumentViewer(record) {
+  const path = record.archive_path || "";
+  const href = archiveHref(path);
+  const archivedName = path ? String(path).replaceAll("\\", "/").split("/").pop() : "";
+  const displayName = record.file_name || archivedName || "Archived document";
+  const fileType = fileTypeForPath(path || displayName);
+  const canPreview = isPdfPath(path) || isImagePath(path);
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop shared-document-backdrop">
+      <section class="shared-document-modal" role="dialog" aria-modal="true" aria-labelledby="shared-document-title">
+        <header class="shared-document-header">
+          <div class="shared-document-heading">
+            <span class="shared-document-type">${escapeHtml(fileType)}</span>
+            <div>
+              <small>Shared document record · read only</small>
+              <h2 id="shared-document-title">${escapeHtml(record.title || displayName)}</h2>
+            </div>
+          </div>
+          <button class="pdf-preview-close" type="button" aria-label="Close document details">×</button>
+        </header>
+        <div class="shared-document-content">
+          <div class="shared-document-notice">
+            This is an existing migrated document. The source file and record remain unchanged.
+          </div>
+          <dl class="shared-document-summary">
+            <div><dt>Company</dt><dd>${escapeHtml(workerProfileValue(record.company))}</dd></div>
+            <div><dt>Subcontractor</dt><dd>${escapeHtml(workerProfileValue(record.subcontractor))}</dd></div>
+            <div><dt>Original filename</dt><dd>${escapeHtml(displayName)}</dd></div>
+            <div><dt>Archive filename</dt><dd>${escapeHtml(archivedName || "Not available")}</dd></div>
+            <div><dt>File type</dt><dd>${escapeHtml(fileType)}</dd></div>
+            <div><dt>Source</dt><dd>${escapeHtml(workerProfileValue(record.source))}</dd></div>
+          </dl>
+          <div class="shared-document-actions">
+            ${canPreview && href
+              ? `<button class="button button-primary" id="shared-document-preview" type="button">Preview ${escapeHtml(fileType)}</button>`
+              : ""}
+            ${href
+              ? `<a class="button button-secondary" href="${escapeHtml(href)}" target="_blank" rel="noopener">Open in new tab</a>
+                 <a class="button button-secondary" href="${escapeHtml(href)}" download="${escapeHtml(displayName)}">Download</a>`
+              : ""}
+          </div>
+          <section class="shared-document-history" aria-labelledby="shared-document-history-title">
+            <div class="shared-document-section-heading">
+              <span>Version history</span>
+              <h3 id="shared-document-history-title">Available source evidence</h3>
+            </div>
+            <article>
+              <span class="version-marker">1</span>
+              <div>
+                <strong>Migrated source version</strong>
+                <small>${escapeHtml(displayName)} · preserved in the authorised local archive</small>
+              </div>
+              <span class="version-state">Current archived copy</span>
+            </article>
+            <p>No replacement or earlier-version history was included in the current snapshot.</p>
+          </section>
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".shared-document-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("shared-document-backdrop")) close();
+  });
+  modalRoot.querySelector("#shared-document-preview")?.addEventListener("click", () => {
+    if (isPdfPath(path)) openPdfPreview(href, displayName);
+    else openImagePreview(href, displayName);
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
+function openRiskAssessmentViewer(record) {
+  const calculatedState = expiryStateForRow(record);
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop risk-detail-backdrop">
+      <section class="risk-detail-modal" role="dialog" aria-modal="true" aria-labelledby="risk-detail-title">
+        <header class="risk-detail-header">
+          <div>
+            <small>RAMS / Risk Assessment · read only</small>
+            <h2 id="risk-detail-title">${escapeHtml(record.title || "Untitled record")}</h2>
+            <p>${escapeHtml(record.site || "No site recorded")}</p>
+          </div>
+          <button class="pdf-preview-close" type="button" aria-label="Close RAMS details">×</button>
+        </header>
+        <div class="risk-detail-content">
+          <div class="risk-status-banner ${calculatedState}">
+            <span>${escapeHtml(expiryStateLabel(calculatedState))}</span>
+            <strong>${escapeHtml(expiryTimingLabel(record.expiry_date))}</strong>
+            <small>Calculated from the stored expiry date as of today.</small>
+          </div>
+          <dl class="risk-detail-summary">
+            <div><dt>Company</dt><dd>${escapeHtml(workerProfileValue(record.company))}</dd></div>
+            <div><dt>Subcontractor</dt><dd>${escapeHtml(workerProfileValue(record.subcontractor))}</dd></div>
+            <div><dt>Site</dt><dd>${escapeHtml(workerProfileValue(record.site))}</dd></div>
+            <div><dt>Expiry date</dt><dd>${escapeHtml(formatDate(record.expiry_date))}</dd></div>
+            <div><dt>Calculated status</dt><dd>${escapeHtml(expiryStateLabel(calculatedState))}</dd></div>
+            <div><dt>Source status</dt><dd>${escapeHtml(workerProfileValue(record.expiry_status))}</dd></div>
+            <div><dt>Source</dt><dd>${escapeHtml(workerProfileValue(record.source))}</dd></div>
+            <div><dt>Record ID</dt><dd>${escapeHtml(record.source_id || record.id || "Not available")}</dd></div>
+          </dl>
+          <section class="risk-attachment-state" aria-labelledby="risk-attachment-title">
+            <span class="risk-attachment-icon" aria-hidden="true">!</span>
+            <div>
+              <h3 id="risk-attachment-title">Archived attachment not included</h3>
+              <p>The authorised snapshot contains this RAMS metadata, but no corresponding PDF or image exists in the local archive. No replacement document has been generated.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".risk-detail-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("risk-detail-backdrop")) close();
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
+function openDistributionViewer(record) {
+  const status = String(record.status || "Pending");
+  const statusClass = status.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const hasSubmission = Boolean(dateValue(record.submitted_date)) || ["Submitted", "Completed"].includes(status);
+  const isCompleted = status === "Completed";
+  const detailValue = (value) => {
+    const text = String(value || "").trim();
+    return text && text !== "-" ? text : "Not recorded in current snapshot";
+  };
+  const timelineStep = (label, detail, stateClass) => `
+    <li class="${stateClass}">
+      <span class="distribution-timeline-marker" aria-hidden="true"></span>
+      <div><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></div>
+    </li>
+  `;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop distribution-detail-backdrop">
+      <section class="distribution-detail-modal" role="dialog" aria-modal="true" aria-labelledby="distribution-detail-title">
+        <header class="distribution-detail-header">
+          <div>
+            <small>Form distribution · read only</small>
+            <h2 id="distribution-detail-title">${escapeHtml(record.form || "Unnamed form")}</h2>
+            <p>${escapeHtml(record.worker || "No worker recorded")}</p>
+          </div>
+          <button class="pdf-preview-close" type="button" aria-label="Close distribution details">×</button>
+        </header>
+        <div class="distribution-detail-content">
+          <div class="distribution-status-banner ${escapeHtml(statusClass)}">
+            <span>${escapeHtml(status)}</span>
+            <div>
+              <strong>${hasSubmission ? "A submission is recorded" : "Awaiting worker submission"}</strong>
+              <small>This state comes directly from the imported customer snapshot.</small>
+            </div>
+          </div>
+          <dl class="distribution-detail-summary">
+            <div><dt>Worker</dt><dd>${escapeHtml(detailValue(record.worker))}</dd></div>
+            <div><dt>Assigned form</dt><dd>${escapeHtml(detailValue(record.form))}</dd></div>
+            <div><dt>Assigned sites</dt><dd>${escapeHtml(detailValue(record.sites))}</dd></div>
+            <div><dt>Current status</dt><dd>${escapeHtml(status)}</dd></div>
+            <div><dt>Assigned date</dt><dd>${escapeHtml(displayDate(record.assigned_date) || detailValue(record.assigned_date))}</dd></div>
+            <div><dt>Submitted date</dt><dd>${escapeHtml(displayDate(record.submitted_date) || detailValue(record.submitted_date))}</dd></div>
+            <div><dt>Score</dt><dd>${escapeHtml(detailValue(record.score))}</dd></div>
+            <div><dt>Source record ID</dt><dd>${escapeHtml(record.source_id || record.id || "Not available")}</dd></div>
+          </dl>
+          <section class="distribution-lifecycle" aria-labelledby="distribution-lifecycle-title">
+            <div class="distribution-section-heading">
+              <span>Workflow</span>
+              <h3 id="distribution-lifecycle-title">Assignment lifecycle</h3>
+            </div>
+            <ol>
+              ${timelineStep("Assigned", displayDate(record.assigned_date) || detailValue(record.assigned_date), "complete")}
+              ${timelineStep("Submitted", hasSubmission ? (displayDate(record.submitted_date) || "Recorded without a date") : "Not yet recorded", hasSubmission ? "complete" : "current")}
+              ${timelineStep("Completed", isCompleted ? "Marked completed" : "Not yet recorded", isCompleted ? "complete" : "upcoming")}
+            </ol>
+          </section>
+          <section class="distribution-evidence-state" aria-labelledby="distribution-evidence-title">
+            <span aria-hidden="true">i</span>
+            <div>
+              <h3 id="distribution-evidence-title">Submission answers are not included</h3>
+              <p>The authorised snapshot contains assignment, date, status and score metadata only. Individual answers, signatures and attachments have not been inferred or generated.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".distribution-detail-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("distribution-detail-backdrop")) close();
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
+function mountRecordInspector(markup, backdropClass, afterMount) {
+  modalRoot.innerHTML = markup;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(`.${backdropClass}`).addEventListener("click", (event) => {
+    if (event.target.classList.contains(backdropClass)) close();
+  });
+  afterMount?.(close);
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
+function inductionStats(record) {
+  const pages = Array.isArray(record?.pages?.pages) ? record.pages.pages : [];
+  const blocks = pages.flatMap((page) => Array.isArray(page.blocks) ? page.blocks : []);
+  return {
+    pages,
+    questionCount: blocks.filter((block) => block.type === "question").length,
+    textCount: blocks.filter((block) => block.type === "text").length,
+    imageCount: blocks.reduce((total, block) => total + Number(block.embedded_image_count || 0), 0),
+  };
+}
+
+function inductionBlockMarkup(block, blockIndex) {
+  if (block.type === "question") {
+    const options = Array.isArray(block.options) ? block.options : [];
+    return `
+      <article class="induction-preview-block question-block">
+        <div class="preview-block-label"><span>Question ${blockIndex + 1}</span><small>${escapeHtml(String(block.question_type || "Choice").replaceAll("_", " "))}</small></div>
+        <h4>${escapeHtml(block.text || "Untitled question")}</h4>
+        <ul class="induction-answer-options">
+          ${options.map((option) => `
+            <li class="${option.correct ? "correct" : ""}">
+              <span aria-hidden="true">${option.correct ? "✓" : "○"}</span>
+              <strong>${escapeHtml(option.text || "Unnamed option")}</strong>
+              ${option.correct ? "<small>Configured correct answer</small>" : ""}
+            </li>
+          `).join("") || "<li>No answer options were included.</li>"}
+        </ul>
+      </article>
+    `;
+  }
+  const imageCount = Number(block.embedded_image_count || 0);
+  return `
+    <article class="induction-preview-block text-block">
+      <div class="preview-block-label"><span>Content block ${blockIndex + 1}</span><small>${Number(block.mapped_character_count || String(block.text || "").length).toLocaleString()} mapped characters</small></div>
+      <p>${escapeHtml(block.text || "No text was included in this mapped block.")}</p>
+      ${imageCount ? `<div class="mapped-media-note"><strong>${imageCount} embedded image${imageCount === 1 ? "" : "s"} referenced</strong><small>The image binaries were not included in the authorised induction snapshot.</small></div>` : ""}
+    </article>
+  `;
+}
+
+function openInductionViewer(record) {
+  const stats = inductionStats(record);
+  const pageButtons = stats.pages.map((page, index) => `
+    <button type="button" class="induction-page-button ${index === 0 ? "active" : ""}" data-induction-page="${index}" aria-pressed="${index === 0}">
+      <span>${String(index + 1).padStart(2, "0")}</span>
+      <strong>Page ${index + 1}</strong>
+      <small>${(page.blocks || []).length} block${(page.blocks || []).length === 1 ? "" : "s"}</small>
+    </button>
+  `).join("");
+  const pagePanels = stats.pages.map((page, index) => `
+    <section class="induction-page-panel ${index === 0 ? "active" : ""}" data-induction-panel="${index}" aria-label="Induction page ${index + 1}">
+      <header><span>Page ${index + 1} of ${stats.pages.length}</span><strong>${(page.blocks || []).length} mapped content block${(page.blocks || []).length === 1 ? "" : "s"}</strong></header>
+      <div class="induction-page-blocks">
+        ${(page.blocks || []).map(inductionBlockMarkup).join("") || `<p class="inspector-empty">No mapped content was included for this page.</p>`}
+      </div>
+    </section>
+  `).join("");
+  mountRecordInspector(`
+    <div class="modal-backdrop record-inspector-backdrop induction-inspector-backdrop">
+      <section class="record-inspector-modal induction-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="induction-inspector-title">
+        <header class="record-inspector-header">
+          <div>
+            <small>Site induction · read only</small>
+            <h2 id="induction-inspector-title">${escapeHtml(record.title || "Untitled induction")}</h2>
+            <p>${escapeHtml(record.site || "No site recorded")} · ${escapeHtml(record.status || "Unknown status")}</p>
+          </div>
+          <button class="pdf-preview-close" type="button" aria-label="Close induction preview">×</button>
+        </header>
+        <div class="record-inspector-content induction-inspector-content">
+          <section class="inspector-summary-grid induction-summary-grid" aria-label="Induction summary">
+            <div><span>Pages</span><strong>${stats.pages.length}</strong></div>
+            <div><span>Questions</span><strong>${stats.questionCount}</strong></div>
+            <div><span>Text blocks</span><strong>${stats.textCount}</strong></div>
+            <div><span>Recorded submissions</span><strong>${Number(record.submissions || 0).toLocaleString()}</strong></div>
+          </section>
+          <div class="induction-preview-layout">
+            <nav class="induction-page-navigation" aria-label="Induction pages">${pageButtons}</nav>
+            <div class="induction-page-stage">${pagePanels}</div>
+          </div>
+          <div class="inspector-disclosure"><strong>Media boundary</strong><span>${stats.imageCount} embedded image references were mapped, but their image files were not included. No replacement media has been generated.</span></div>
+        </div>
+      </section>
+    </div>
+  `, "induction-inspector-backdrop", () => {
+    modalRoot.querySelectorAll("[data-induction-page]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.inductionPage;
+        modalRoot.querySelectorAll("[data-induction-page]").forEach((candidate) => {
+          const active = candidate.dataset.inductionPage === target;
+          candidate.classList.toggle("active", active);
+          candidate.setAttribute("aria-pressed", String(active));
+        });
+        modalRoot.querySelectorAll("[data-induction-panel]").forEach((panel) => {
+          panel.classList.toggle("active", panel.dataset.inductionPanel === target);
+        });
+      });
+    });
+  });
+}
+
+function openAssetViewer(record) {
+  const qrPath = record.qr_archive_path || "";
+  const qrHref = archiveHref(qrPath);
+  const qrName = qrPath ? qrPath.replaceAll("\\", "/").split("/").pop() : "";
+  mountRecordInspector(`
+    <div class="modal-backdrop record-inspector-backdrop asset-inspector-backdrop">
+      <section class="record-inspector-modal asset-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="asset-inspector-title">
+        <header class="record-inspector-header asset-inspector-header">
+          <div><small>Asset register · read only</small><h2 id="asset-inspector-title">${escapeHtml(record.name || "Unnamed asset")}</h2><p>${escapeHtml(record.asset_id || "No asset ID")}</p></div>
+          <button class="pdf-preview-close" type="button" aria-label="Close asset details">×</button>
+        </header>
+        <div class="record-inspector-content asset-inspector-content">
+          <dl class="record-inspector-fields">
+            <div><dt>Asset ID</dt><dd>${escapeHtml(workerProfileValue(record.asset_id))}</dd></div>
+            <div><dt>Asset name</dt><dd>${escapeHtml(workerProfileValue(record.name))}</dd></div>
+            <div><dt>Company</dt><dd>${escapeHtml(workerProfileValue(record.company))}</dd></div>
+            <div><dt>Subcontractor</dt><dd>${escapeHtml(workerProfileValue(record.subcontractor))}</dd></div>
+            <div><dt>Source record ID</dt><dd>${escapeHtml(record.source_id || record.id || "Not available")}</dd></div>
+            <div><dt>Source</dt><dd>${escapeHtml(workerProfileValue(record.source))}</dd></div>
+          </dl>
+          <section class="asset-qr-panel" aria-labelledby="asset-qr-title">
+            ${qrHref ? `<img src="${escapeHtml(qrHref)}" alt="Archived QR code for ${escapeHtml(record.name || "asset")}" />` : `<div class="asset-qr-missing">QR unavailable</div>`}
+            <div>
+              <span>Preserved source QR</span>
+              <h3 id="asset-qr-title">${qrHref ? "Archived QR code available" : "No QR was included"}</h3>
+              <p>${qrHref ? "This is the original QR image preserved in the authorised source archive." : "No QR image path exists for this record."}</p>
+              ${qrHref ? `<div class="inspector-actions"><a class="button button-secondary" href="${escapeHtml(qrHref)}" target="_blank" rel="noopener">Open QR</a><a class="button button-primary" href="${escapeHtml(qrHref)}" download="${escapeHtml(qrName)}">Download QR</a></div>` : ""}
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  `, "asset-inspector-backdrop");
+}
+
+function openTrainingViewer(record) {
+  const indicator = String(record.expiry_date || "-");
+  const indicatorClass = indicator === "Expired" ? "expired" : "not-recorded";
+  mountRecordInspector(`
+    <div class="modal-backdrop record-inspector-backdrop training-inspector-backdrop">
+      <section class="record-inspector-modal training-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="training-inspector-title">
+        <header class="record-inspector-header training-inspector-header">
+          <div><small>Training catalogue · read only</small><h2 id="training-inspector-title">${escapeHtml(record.question || "Untitled training question")}</h2><p>Customer-configured worker compliance question</p></div>
+          <button class="pdf-preview-close" type="button" aria-label="Close training details">×</button>
+        </header>
+        <div class="record-inspector-content">
+          <div class="training-indicator ${indicatorClass}"><span>${escapeHtml(indicator === "-" ? "Not recorded" : indicator)}</span><div><strong>Snapshot expiry indicator</strong><small>This value is stored on the training-question record and is not a worker certificate expiry date.</small></div></div>
+          <dl class="record-inspector-fields">
+            <div><dt>Question</dt><dd>${escapeHtml(workerProfileValue(record.question))}</dd></div>
+            <div><dt>Source indicator</dt><dd>${escapeHtml(indicator === "-" ? "Not recorded" : indicator)}</dd></div>
+            <div><dt>Source record ID</dt><dd>${escapeHtml(record.source_id || record.id || "Not available")}</dd></div>
+            <div><dt>Source</dt><dd>${escapeHtml(workerProfileValue(record.source))}</dd></div>
+          </dl>
+          <div class="inspector-disclosure"><strong>Worker evidence not included</strong><span>The snapshot does not contain per-worker answers, certificate expiry dates, or evidence files for this question. These have not been inferred.</span></div>
+        </div>
+      </section>
+    </div>
+  `, "training-inspector-backdrop");
+}
+
+async function openFormDefinitionViewer(record) {
+  const sections = Array.isArray(record?.definition?.sections) ? record.definition.sections : [];
+  const questionCount = sections.reduce((total, section) => total + (section.questions || []).length, 0);
+  const distributionResult = await api("/api/resources/distributions?limit=5000");
+  const linked = (distributionResult.data || []).filter((distribution) => distribution.form === record.name);
+  const linkedByStatus = linked.reduce((summary, distribution) => {
+    const key = String(distribution.status || "Pending").toLowerCase();
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {});
+  const qrHref = archiveHref(record.qr_archive_path || "");
+  mountRecordInspector(`
+    <div class="modal-backdrop record-inspector-backdrop form-inspector-backdrop">
+      <section class="record-inspector-modal form-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="form-inspector-title">
+        <header class="record-inspector-header form-inspector-header">
+          <div><small>Custom form definition · read only</small><h2 id="form-inspector-title">${escapeHtml(record.name || "Unnamed form")}</h2><p>${escapeHtml(record.status || "Unknown status")} · ${linked.length} linked distribution${linked.length === 1 ? "" : "s"}</p></div>
+          <button class="pdf-preview-close" type="button" aria-label="Close form definition">×</button>
+        </header>
+        <div class="record-inspector-content">
+          <section class="inspector-summary-grid form-summary-grid" aria-label="Form definition summary">
+            <div><span>Sections</span><strong>${sections.length}</strong></div>
+            <div><span>Questions</span><strong>${questionCount}</strong></div>
+            <div><span>Pending assignments</span><strong>${Number(linkedByStatus.pending || 0)}</strong></div>
+            <div><span>Submitted</span><strong>${Number(linkedByStatus.submitted || 0)}</strong></div>
+          </section>
+          <dl class="record-inspector-fields">
+            <div><dt>Assigned sites</dt><dd>${escapeHtml(workerProfileValue(record.assigned_sites))}</dd></div>
+            <div><dt>Assigned roles</dt><dd>${escapeHtml(workerProfileValue(record.assigned_roles))}</dd></div>
+            <div><dt>Status</dt><dd>${escapeHtml(workerProfileValue(record.status))}</dd></div>
+            <div><dt>Archived QR</dt><dd>${qrHref ? `<a href="${escapeHtml(qrHref)}" target="_blank" rel="noopener">Open preserved QR</a>` : "Not included"}</dd></div>
+          </dl>
+          <section class="form-definition-sections" aria-label="Form sections">
+            ${sections.map((section, sectionIndex) => `
+              <article>
+                <header><span>${String(sectionIndex + 1).padStart(2, "0")}</span><div><small>Section</small><h3>${escapeHtml(section.name || `Section ${sectionIndex + 1}`)}</h3></div><strong>${(section.questions || []).length} questions</strong></header>
+                <ol>${(section.questions || []).map((question) => `<li><span>${escapeHtml(question.type || "Default")}</span><strong>${escapeHtml(question.text || "Untitled question")}</strong></li>`).join("") || "<li>No questions included.</li>"}</ol>
+              </article>
+            `).join("") || `<p class="inspector-empty">No form sections were included.</p>`}
+          </section>
+          <div class="inspector-disclosure"><strong>Definition only</strong><span>This preview shows the imported form structure and linked assignment metadata. It does not create assignments or submit responses.</span></div>
+        </div>
+      </section>
+    </div>
+  `, "form-inspector-backdrop");
+}
+
+function workerInitials(name) {
+  return String(name || "Worker")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("");
+}
+
+function workerProfileValue(value) {
+  const text = String(value || "").trim();
+  return text && text !== "-" ? text : "Not available in current snapshot";
+}
+
+async function openWorkerProfile(record) {
+  const inductionResult = await api("/api/resources/inductions?limit=5000");
+  const assignedSites = splitWorkerValues(record.sites).map((site) => site.toLocaleLowerCase());
+  const availableInductions = (inductionResult.data || []).filter((induction) =>
+    assignedSites.includes(String(induction.site || "").trim().toLocaleLowerCase()),
+  );
+  const progressMatch = String(record.induction_status || "").match(/^(\d+)\s*\/\s*(\d+)$/);
+  const inductionProgress = progressMatch
+    ? `${progressMatch[1]} of ${progressMatch[2]} recorded as complete`
+    : workerProfileValue(record.induction_status);
+  const profileField = (label, value) => `
+    <div class="worker-profile-field">
+      <dt>${escapeHtml(label)}</dt>
+      <dd>${escapeHtml(workerProfileValue(value))}</dd>
+    </div>
+  `;
+  const complianceCard = (label, value) => {
+    const display = workerProfileValue(value);
+    const statusClass = String(value || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    return `
+      <div class="worker-compliance-card">
+        <span>${escapeHtml(label)}</span>
+        <strong class="worker-compliance-value ${escapeHtml(statusClass)}">${escapeHtml(display)}</strong>
+      </div>
+    `;
+  };
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop worker-profile-backdrop">
+      <section class="worker-profile-modal" role="dialog" aria-modal="true" aria-labelledby="worker-profile-title">
+        <header class="worker-profile-header">
+          <div class="worker-profile-identity">
+            <span class="worker-profile-avatar" aria-hidden="true">${escapeHtml(workerInitials(record.name))}</span>
+            <div>
+              <small>Universal worker profile foundation · read only</small>
+              <h2 id="worker-profile-title">${escapeHtml(record.name || "Unnamed worker")}</h2>
+              <p>${escapeHtml(workerProfileValue(record.roles))} · ${escapeHtml(workerProfileValue(record.sites))}</p>
+            </div>
+          </div>
+          <button class="pdf-preview-close" type="button" aria-label="Close worker profile">×</button>
+        </header>
+        <div class="worker-profile-content">
+          <div class="worker-profile-notice">
+            This profile shows only fields present in the authorised local snapshot. No details have been inferred or generated.
+          </div>
+          <section class="worker-profile-section" aria-labelledby="worker-contact-heading">
+            <div class="worker-profile-section-heading">
+              <span>01</span>
+              <div><small>Current record</small><h3 id="worker-contact-heading">Identity and contact</h3></div>
+            </div>
+            <dl class="worker-profile-grid">
+              ${profileField("Worker ID", record.worker_id)}
+              ${profileField("Email", record.email)}
+              ${profileField("Phone", record.phone)}
+              ${profileField("Account status", record.status)}
+            </dl>
+          </section>
+          <section class="worker-profile-section" aria-labelledby="worker-placement-heading">
+            <div class="worker-profile-section-heading">
+              <span>02</span>
+              <div><small>Company relationship</small><h3 id="worker-placement-heading">Work placement</h3></div>
+            </div>
+            <dl class="worker-profile-grid">
+              ${profileField("Worker type", record.type)}
+              ${profileField("Assigned site", record.sites)}
+              ${profileField("Role / trade", record.roles)}
+              ${profileField("Subcontractor", record.subcontractor)}
+            </dl>
+          </section>
+          <section class="worker-profile-section" aria-labelledby="worker-compliance-heading">
+            <div class="worker-profile-section-heading">
+              <span>03</span>
+              <div><small>Snapshot indicators</small><h3 id="worker-compliance-heading">Compliance overview</h3></div>
+            </div>
+            <div class="worker-compliance-grid">
+              ${complianceCard("Safe Pass", record.safe_pass_expiry)}
+              ${complianceCard("Induction", record.induction_status)}
+              ${complianceCard("Training", record.training_status)}
+              ${complianceCard("Temporary validity", record.temporary_expiry)}
+            </div>
+            <dl class="worker-profile-grid worker-profile-grid-compact">
+              ${profileField("Temporary valid from", record.temporary_valid_from)}
+              ${profileField("Imported source", record.source)}
+            </dl>
+          </section>
+          <section class="worker-profile-section" aria-labelledby="worker-induction-heading">
+            <div class="worker-profile-section-heading">
+              <span>04</span>
+              <div><small>Available site relationships</small><h3 id="worker-induction-heading">Induction readiness</h3></div>
+            </div>
+            <div class="worker-induction-progress"><span>Snapshot progress</span><strong>${escapeHtml(inductionProgress)}</strong></div>
+            <div class="worker-induction-links">
+              ${availableInductions.length
+                ? availableInductions.map((induction) => `<article><div><strong>${escapeHtml(induction.title || "Untitled induction")}</strong><small>${escapeHtml(induction.site || "No site")} · ${Number(induction.submissions || 0)} recorded submissions</small></div><span>${escapeHtml(induction.status || "Unknown")}</span></article>`).join("")
+                : `<p>No induction definition exactly matches the worker's assigned-site text in the current snapshot.</p>`}
+            </div>
+            <div class="worker-profile-relationship-note">These are exact site-name matches only. The snapshot does not identify which specific induction each worker completed, so no completion has been inferred.</div>
+          </section>
+        </div>
+      </section>
+    </div>
+  `;
+  document.body.classList.add("modal-open");
+  const close = () => {
+    modalRoot.innerHTML = "";
+    document.body.classList.remove("modal-open");
+  };
+  modalRoot.querySelector(".pdf-preview-close").addEventListener("click", close);
+  modalRoot.querySelector(".worker-profile-backdrop").addEventListener("click", (event) => {
+    if (event.target.classList.contains("worker-profile-backdrop")) close();
+  });
+  modalRoot.querySelector(".pdf-preview-close").focus();
+}
+
 function setLoading(visible) {
   loading.classList.toggle("hidden", !visible);
 }
@@ -637,7 +1578,147 @@ function pageHeader(title, subtitle = "", action = "") {
 }
 
 async function renderDashboard() {
-  const counts = await api("/api/dashboard");
+  const [counts, ga1Result, workerResult, riskResult, distributionResult, inductionResult, assetResult, trainingResult, formResult] = await Promise.all([
+    api("/api/dashboard"),
+    api("/api/resources/ga1?limit=5000"),
+    api("/api/resources/workers?limit=5000"),
+    api("/api/resources/risk_assessment?limit=5000"),
+    api("/api/resources/distributions?limit=5000"),
+    api("/api/resources/inductions?limit=5000"),
+    api("/api/resources/assets?limit=5000"),
+    api("/api/resources/training?limit=5000"),
+    api("/api/resources/forms?limit=5000"),
+  ]);
+  const ga1Rows = ga1Result.data || [];
+  const workerRows = workerResult.data || [];
+  const riskRows = riskResult.data || [];
+  const distributionRows = distributionResult.data || [];
+  const inductionRows = inductionResult.data || [];
+  const assetRows = assetResult.data || [];
+  const trainingRows = trainingResult.data || [];
+  const formRows = formResult.data || [];
+  const inductionSubmissionTotal = inductionRows.reduce((total, row) => total + Number(row.submissions || 0), 0);
+  const inductionPageTotal = inductionRows.reduce((total, row) => total + inductionStats(row).pages.length, 0);
+  const preservedAssetQrTotal = assetRows.filter((row) => row.qr_archive_path).length;
+  const expiredTrainingIndicators = trainingRows.filter((row) => row.expiry_date === "Expired").length;
+  const formQuestionTotal = formRows.reduce((total, row) => {
+    const sections = Array.isArray(row?.definition?.sections) ? row.definition.sections : [];
+    return total + sections.reduce((sectionTotal, section) => sectionTotal + (section.questions || []).length, 0);
+  }, 0);
+  const ga1ByState = ga1Rows.reduce((summary, row) => {
+    const key = expiryStateForRow(row);
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {});
+  const safePassExpired = workerRows.filter((row) => row.safe_pass_expiry === "Expired");
+  const safePassDueSoon = workerRows.filter((row) => row.safe_pass_expiry === "Expiring Soon");
+  const safePassMissing = workerRows.filter((row) => !row.safe_pass_expiry || row.safe_pass_expiry === "-");
+  const riskByState = riskRows.reduce((summary, row) => {
+    const key = expiryStateForRow(row);
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {});
+  const distributionsByStatus = distributionRows.reduce((summary, row) => {
+    const key = String(row.status || "Pending").toLowerCase();
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {});
+  const ga1AttentionRows = ga1Rows
+    .filter((row) => ["due_soon", "expired"].includes(expiryStateForRow(row)))
+    .sort((left, right) => {
+      const leftState = expiryStateForRow(left);
+      const rightState = expiryStateForRow(right);
+      if (leftState !== rightState) return leftState === "due_soon" ? -1 : 1;
+      const difference = dateValue(left.expiry_date) - dateValue(right.expiry_date);
+      return leftState === "expired" ? -difference : difference;
+    })
+    .slice(0, 6);
+  const safePassAttentionRows = [...safePassExpired, ...safePassDueSoon, ...safePassMissing]
+    .slice(0, 6);
+  const riskAttentionRows = riskRows
+    .filter((row) => ["due_soon", "expired"].includes(expiryStateForRow(row)))
+    .sort((left, right) => {
+      const leftState = expiryStateForRow(left);
+      const rightState = expiryStateForRow(right);
+      if (leftState !== rightState) return leftState === "due_soon" ? -1 : 1;
+      const difference = dateValue(left.expiry_date) - dateValue(right.expiry_date);
+      return leftState === "expired" ? -difference : difference;
+    })
+    .slice(0, 6);
+  const ga1AttentionMarkup = ga1AttentionRows.length
+    ? ga1AttentionRows
+        .map((row) => {
+          const stateKey = expiryStateForRow(row);
+          return `
+            <li>
+              <span class="alert-status-dot ${stateKey}" aria-hidden="true"></span>
+              <div>
+                <strong>${escapeHtml(row.title || "Untitled GA1 set")}</strong>
+                <small>${escapeHtml(row.site || "No site")} · ${escapeHtml(expiryTimingLabel(row.expiry_date))}</small>
+              </div>
+              <span class="alert-state ${stateKey}">${escapeHtml(expiryStateLabel(stateKey))}</span>
+            </li>
+          `;
+        })
+        .join("")
+    : `<li class="alert-empty">No GA1 expiry issues in the current snapshot.</li>`;
+  const safePassAttentionMarkup = safePassAttentionRows.length
+    ? safePassAttentionRows
+        .map((row) => {
+          const rawStatus = row.safe_pass_expiry && row.safe_pass_expiry !== "-"
+            ? row.safe_pass_expiry
+            : "Not recorded";
+          const stateKey = rawStatus === "Expired"
+            ? "expired"
+            : rawStatus === "Expiring Soon"
+              ? "due_soon"
+              : "not_applicable";
+          return `
+            <li>
+              <span class="alert-status-dot ${stateKey}" aria-hidden="true"></span>
+              <div>
+                <strong>${escapeHtml(row.name || "Unnamed worker")}</strong>
+                <small>${escapeHtml(row.roles || "No role")} · ${escapeHtml(row.sites || "No site")}</small>
+              </div>
+              <span class="alert-state ${stateKey}">${escapeHtml(rawStatus)}</span>
+            </li>
+          `;
+        })
+        .join("")
+    : `<li class="alert-empty">No Safe Pass issues in the current snapshot.</li>`;
+  const riskAttentionMarkup = riskAttentionRows.length
+    ? riskAttentionRows
+        .map((row) => {
+          const stateKey = expiryStateForRow(row);
+          return `
+            <li>
+              <span class="alert-status-dot ${stateKey}" aria-hidden="true"></span>
+              <div>
+                <strong>${escapeHtml(row.title || "Untitled RAMS record")}</strong>
+                <small>${escapeHtml(row.site || "No site")} · ${escapeHtml(expiryTimingLabel(row.expiry_date))}</small>
+              </div>
+              <span class="alert-state ${stateKey}">${escapeHtml(expiryStateLabel(stateKey))}</span>
+            </li>
+          `;
+        })
+        .join("")
+    : `<li class="alert-empty">No RAMS expiry issues in the current snapshot.</li>`;
+  const pendingDistributionRows = distributionRows
+    .filter((row) => String(row.status || "Pending") === "Pending")
+    .sort((left, right) => dateValue(left.assigned_date) - dateValue(right.assigned_date))
+    .slice(0, 6);
+  const pendingDistributionMarkup = pendingDistributionRows.length
+    ? pendingDistributionRows.map((row) => `
+        <li>
+          <span class="alert-status-dot due_soon" aria-hidden="true"></span>
+          <div>
+            <strong>${escapeHtml(row.worker || "Unnamed worker")}</strong>
+            <small>${escapeHtml(row.form || "Unnamed form")} · assigned ${escapeHtml(displayDate(row.assigned_date) || "date unavailable")}</small>
+          </div>
+          <span class="alert-state due_soon">Pending</span>
+        </li>
+      `).join("")
+    : `<li class="alert-empty">No pending form assignments in the current snapshot.</li>`;
   const complianceTotal = [
     "ga2",
     "ga3",
@@ -687,6 +1768,79 @@ async function renderDashboard() {
         <div><span>${Number(counts.inductions || 0).toLocaleString()}</span><small>Active induction forms</small></div>
       </div>
     </section>
+    <div class="section-heading compliance-section-heading">
+      <div><span>Compliance attention</span><strong>Calculated from the current snapshot</strong></div>
+      <small>As of ${escapeHtml(displayDate(new Date().toISOString().slice(0, 10)))}</small>
+    </div>
+    <section class="compliance-summary-grid" aria-label="Compliance summary">
+      <a class="compliance-summary-card expired" href="/ga1" data-route>
+        <span>GA1 expired</span><strong>${Number(ga1ByState.expired || 0).toLocaleString()}</strong><small>Requires review</small>
+      </a>
+      <a class="compliance-summary-card due-soon" href="/ga1" data-route>
+        <span>GA1 due within 30 days</span><strong>${Number(ga1ByState.due_soon || 0).toLocaleString()}</strong><small>Upcoming expiry</small>
+      </a>
+      <a class="compliance-summary-card valid" href="/ga1" data-route>
+        <span>GA1 valid</span><strong>${Number(ga1ByState.active || 0).toLocaleString()}</strong><small>More than 30 days</small>
+      </a>
+      <a class="compliance-summary-card expired" href="/workers" data-route>
+        <span>Safe Pass expired</span><strong>${safePassExpired.length.toLocaleString()}</strong><small>${safePassDueSoon.length} expiring soon</small>
+      </a>
+      <a class="compliance-summary-card expired" href="/risk_assessment" data-route>
+        <span>RAMS expired</span><strong>${Number(riskByState.expired || 0).toLocaleString()}</strong><small>Requires review</small>
+      </a>
+      <a class="compliance-summary-card due-soon" href="/risk_assessment" data-route>
+        <span>RAMS due within 30 days</span><strong>${Number(riskByState.due_soon || 0).toLocaleString()}</strong><small>${Number(riskByState.active || 0).toLocaleString()} currently valid</small>
+      </a>
+      <a class="compliance-summary-card due-soon" href="/form/distribution" data-route>
+        <span>Form assignments pending</span><strong>${Number(distributionsByStatus.pending || 0).toLocaleString()}</strong><small>Awaiting submission</small>
+      </a>
+      <a class="compliance-summary-card valid" href="/form/distribution" data-route>
+        <span>Forms submitted</span><strong>${Number(distributionsByStatus.submitted || 0).toLocaleString()}</strong><small>Response recorded</small>
+      </a>
+      <a class="compliance-summary-card valid" href="/form/distribution" data-route>
+        <span>Forms completed</span><strong>${Number(distributionsByStatus.completed || 0).toLocaleString()}</strong><small>Workflow completed</small>
+      </a>
+    </section>
+    <section class="compliance-alert-panels">
+      <article class="compliance-alert-panel">
+        <header>
+          <div><span>GA1</span><h3>Priority document expiries</h3></div>
+          <a href="/ga1" data-route>View all</a>
+        </header>
+        <ul>${ga1AttentionMarkup}</ul>
+      </article>
+      <article class="compliance-alert-panel">
+        <header>
+          <div><span>Workforce</span><h3>Safe Pass attention</h3></div>
+          <a href="/workers" data-route>View all</a>
+        </header>
+        <ul>${safePassAttentionMarkup}</ul>
+      </article>
+      <article class="compliance-alert-panel compliance-alert-panel-wide">
+        <header>
+          <div><span>RAMS / Risk Assessment</span><h3>Priority RAMS expiries</h3></div>
+          <a href="/risk_assessment" data-route>View all</a>
+        </header>
+        <ul>${riskAttentionMarkup}</ul>
+      </article>
+      <article class="compliance-alert-panel compliance-alert-panel-wide">
+        <header>
+          <div><span>Custom forms</span><h3>Oldest pending assignments</h3></div>
+          <a href="/form/distribution" data-route>View all</a>
+        </header>
+        <ul>${pendingDistributionMarkup}</ul>
+      </article>
+    </section>
+    <div class="section-heading operations-section-heading">
+      <div><span>Operational coverage</span><strong>Real imported structures and evidence</strong></div>
+      <small>No generated customer records</small>
+    </div>
+    <section class="operations-summary-grid" aria-label="Operational data coverage">
+      <a class="operations-summary-card" href="/inductions" data-route><span>Induction definitions</span><strong>${inductionRows.length}</strong><small>${inductionPageTotal} mapped pages · ${inductionSubmissionTotal} recorded submissions</small></a>
+      <a class="operations-summary-card" href="/appliances" data-route><span>Asset register</span><strong>${assetRows.length}</strong><small>${preservedAssetQrTotal} preserved QR images</small></a>
+      <a class="operations-summary-card attention" href="/training" data-route><span>Training catalogue</span><strong>${trainingRows.length}</strong><small>${expiredTrainingIndicators} source expiry indicators</small></a>
+      <a class="operations-summary-card" href="/forms" data-route><span>Custom form definitions</span><strong>${formRows.length}</strong><small>${formQuestionTotal} mapped questions</small></a>
+    </section>
     <div class="section-heading">
       <div><span>Workspace modules</span><strong>Everything at a glance</strong></div>
       <small>Customer snapshot · read-only source</small>
@@ -710,8 +1864,31 @@ async function renderList(config) {
   state.page = Math.min(state.page, totalPages);
   const start = (state.page - 1) * state.pageSize;
   const rows = filteredRows.slice(start, start + state.pageSize);
-  const siteOptions = uniqueValues(result.data, "site");
+  const siteOptions = config.filterMode === "workers"
+    ? uniqueWorkerValues(result.data, "sites")
+    : config.filterMode === "distributions"
+      ? uniqueValues(result.data, "sites")
+      : uniqueValues(result.data, "site");
   const workerOptions = uniqueValues(result.data, "worker");
+  const formOptions = config.filterMode === "distributions" ? uniqueValues(result.data, "form") : [];
+  const workflowStatusOptions = config.filterMode === "distributions" ? uniqueValues(result.data, "status") : [];
+  const roleOptions = config.filterMode === "workers" ? uniqueWorkerValues(result.data, "roles") : [];
+  const accountStatusOptions = config.filterMode === "workers" ? uniqueValues(result.data, "status") : [];
+  const safePassOptions = config.filterMode === "workers" ? uniqueValues(result.data, "safe_pass_expiry") : [];
+  const companyOptions = ["documents", "risk_assessment", "assets"].includes(config.filterMode)
+    ? uniqueValues(result.data, "company")
+    : [];
+  const subcontractorOptions = ["documents", "risk_assessment", "assets"].includes(config.filterMode)
+    ? uniqueValues(result.data, "subcontractor")
+    : [];
+  const recordStatusOptions = ["inductions", "forms"].includes(config.filterMode)
+    ? uniqueValues(result.data, "status")
+    : config.filterMode === "training"
+      ? [...new Set(result.data.map((row) => String(row.expiry_date || "-").trim()))].sort()
+      : [];
+  const fileTypeOptions = config.filterMode === "documents"
+    ? [...new Set(result.data.map((row) => fileTypeForPath(row.archive_path || row.file_name)))].sort()
+    : [];
 
   const headers = [
     `<th>#</th>`,
@@ -725,26 +1902,92 @@ async function renderList(config) {
           const cells = config.columns
             .map(([key, , format]) => `<td>${renderCell(row[key], format)}</td>`)
             .join("");
-          const documentPaths = [
-            ...(Array.isArray(row.archive_paths) ? row.archive_paths : []),
-            row.archive_path,
-          ].filter(Boolean);
+          const documentPaths = recordDocumentPaths(row);
           const actionPath =
             documentPaths.find((path) => isPdfPath(path)) || documentPaths[0];
           const actionFileName = actionPath
             ? String(actionPath).replaceAll("\\", "/").split("/").pop()
             : "";
-          const viewAction = actionPath
+          const viewAction = config.viewMode === "induction"
+            ? `
+              <button class="button-icon view-document" type="button" data-induction-preview="${row.id}"
+                      title="Preview induction" aria-label="Preview induction ${escapeHtml(row.title || "record")}">Preview</button>
+            `
+            : config.viewMode === "asset"
+            ? `
+              <button class="button-icon view-document" type="button" data-asset-details="${row.id}"
+                      title="View asset and QR" aria-label="View asset ${escapeHtml(row.name || row.asset_id || "record")}">View asset</button>
+            `
+            : config.viewMode === "training"
+            ? `
+              <button class="button-icon view-document" type="button" data-training-details="${row.id}"
+                      title="View training question" aria-label="View training question ${escapeHtml(row.question || "record")}">View details</button>
+            `
+            : config.viewMode === "form_definition"
+            ? `
+              <button class="button-icon view-document" type="button" data-form-definition="${row.id}"
+                      title="Preview form definition" aria-label="Preview form ${escapeHtml(row.name || "record")}">Preview form</button>
+            `
+            : config.viewMode === "distribution"
+            ? `
+              <button class="button-icon view-document" type="button"
+                      data-distribution="${row.id}" title="View assignment details"
+                      aria-label="View assignment details for ${escapeHtml(row.worker || "worker")}">
+                View details
+              </button>
+            `
+            : config.viewMode === "risk_assessment"
+            ? `
+              <button class="button-icon view-document" type="button"
+                      data-risk-assessment="${row.id}" title="View RAMS details"
+                      aria-label="View RAMS details for ${escapeHtml(row.title || "record")}">
+                View details
+              </button>
+            `
+            : config.viewMode === "document"
+            ? `
+              <button class="button-icon view-document" type="button"
+                      data-shared-document="${row.id}" title="View document details"
+                      aria-label="View document details for ${escapeHtml(row.title || actionFileName || "document")}">
+                View details
+              </button>
+            `
+            : config.viewMode === "worker"
+            ? `
+              <button class="button-icon view-document" type="button"
+                      data-worker-profile="${row.id}" title="View worker profile"
+                      aria-label="View profile for ${escapeHtml(row.name || "worker")}">
+                View profile
+              </button>
+            `
+            : config.resource === "ga1" && documentPaths.length
+            ? `
+              <button class="button-icon view-document view-document-set" type="button"
+                      data-document-set="${row.id}" title="View all archived documents"
+                      aria-label="View ${documentPaths.length} archived documents">
+                View set (${documentPaths.length})
+              </button>
+            `
+            : actionPath
             ? `
               <a class="button-icon view-document" href="${escapeHtml(archiveHref(actionPath))}"
                  target="_blank" rel="noopener"
                  ${isPdfPath(actionPath) ? `data-pdf-preview data-pdf-name="${escapeHtml(actionFileName)}"` : ""}
-                 title="${isPdfPath(actionPath) ? "Preview PDF" : "Open document"}"
-                 aria-label="${isPdfPath(actionPath) ? "Preview archived PDF" : "Open archived document"}">
-                ${isPdfPath(actionPath) ? "Preview" : "Open"}
+                 ${isImagePath(actionPath) ? `data-image-preview data-image-name="${escapeHtml(actionFileName)}"` : ""}
+                 title="${isPdfPath(actionPath) || isImagePath(actionPath) ? "Preview document" : "Open document"}"
+                 aria-label="${isPdfPath(actionPath) || isImagePath(actionPath) ? "Preview archived document" : "Open archived document"}">
+                ${isPdfPath(actionPath) || isImagePath(actionPath) ? "Preview" : "Open"}
               </a>
             `
             : "";
+          const mutationActions = row._read_only
+            ? `<span class="read-only-badge" title="Imported snapshot records are immutable">Read only</span>`
+            : !canEditLocalRecords()
+            ? `<span class="read-only-badge" title="Viewer role cannot change local records">Viewer access</span>`
+            : `
+              <button class="button-icon" data-edit="${row.id}" title="Edit local record">✎</button>
+              ${canDeleteLocalRecords() ? `<button class="button-icon danger" data-delete="${row.id}" title="Delete local record">⌫</button>` : ""}
+            `;
           return `
             <tr>
               <td>${start + index + 1}</td>
@@ -752,8 +1995,7 @@ async function renderList(config) {
               <td>
                 <div class="actions">
                   ${viewAction}
-                  <button class="button-icon" data-edit="${row.id}" title="Edit">✎</button>
-                  <button class="button-icon danger" data-delete="${row.id}" title="Delete">⌫</button>
+                  ${mutationActions}
                 </div>
               </td>
             </tr>
@@ -770,9 +2012,7 @@ async function renderList(config) {
     )
     .join("");
 
-  const advancedFilters =
-    config.filterMode === "hsa"
-      ? `
+  const hsaFilters = `
         <div class="advanced-filters" aria-label="Record filters">
           <label>
             <span>Site</span>
@@ -804,10 +2044,10 @@ async function renderList(config) {
                     id="date-range-trigger" type="button"
                     aria-haspopup="dialog" aria-expanded="${state.calendarOpen}">
               <span aria-hidden="true">▦</span>
-              <strong>${escapeHtml(selectedDateLabel())}</strong>
+              <strong>${escapeHtml(selectedDateLabel(config))}</strong>
               <span aria-hidden="true">⌄</span>
             </button>
-            ${calendarMarkup()}
+            ${calendarMarkup(config)}
           </div>
           <label>
             <span>Creation order</span>
@@ -818,14 +2058,324 @@ async function renderList(config) {
           </label>
           <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
         </div>
-      `
-      : "";
+      `;
+  const ga1Filters = `
+        <div class="advanced-filters ga1-filters" aria-label="GA1 document filters">
+          <label>
+            <span>Site</span>
+            <select id="filter-site">
+              <option value="">All sites</option>
+              ${siteOptions
+                .map(
+                  (site) =>
+                    `<option value="${escapeHtml(site)}" ${site === state.listFilters.site ? "selected" : ""}>${escapeHtml(site)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Expiry status</span>
+            <select id="filter-expiry-state">
+              <option value="">All statuses</option>
+              <option value="active" ${state.listFilters.expiryState === "active" ? "selected" : ""}>Active</option>
+              <option value="due_soon" ${state.listFilters.expiryState === "due_soon" ? "selected" : ""}>Due within 30 days</option>
+              <option value="expired" ${state.listFilters.expiryState === "expired" ? "selected" : ""}>Expired</option>
+              <option value="not_applicable" ${state.listFilters.expiryState === "not_applicable" ? "selected" : ""}>No expiry date</option>
+            </select>
+          </label>
+          <div class="date-range-filter">
+            <span class="filter-label">Expiry date</span>
+            <button class="date-range-trigger ${state.listFilters.dateStart ? "active" : ""}"
+                    id="date-range-trigger" type="button"
+                    aria-haspopup="dialog" aria-expanded="${state.calendarOpen}">
+              <span aria-hidden="true">▦</span>
+              <strong>${escapeHtml(selectedDateLabel(config))}</strong>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            ${calendarMarkup(config)}
+          </div>
+          <label>
+            <span>Expiry order</span>
+            <select id="filter-order">
+              <option value="expiry_soonest" ${state.listFilters.order === "expiry_soonest" ? "selected" : ""}>Soonest first</option>
+              <option value="expiry_latest" ${state.listFilters.order === "expiry_latest" ? "selected" : ""}>Latest first</option>
+            </select>
+          </label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const riskAssessmentFilters = `
+        <div class="advanced-filters risk-assessment-filters" aria-label="RAMS and Risk Assessment filters">
+          <label>
+            <span>Site</span>
+            <select id="filter-site">
+              <option value="">All sites</option>
+              ${siteOptions.map((site) => `<option value="${escapeHtml(site)}" ${site === state.listFilters.site ? "selected" : ""}>${escapeHtml(site)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Company</span>
+            <select id="filter-company">
+              <option value="">All companies</option>
+              ${companyOptions.map((company) => `<option value="${escapeHtml(company)}" ${company === state.listFilters.company ? "selected" : ""}>${escapeHtml(company)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Subcontractor</span>
+            <select id="filter-subcontractor">
+              <option value="">All subcontractors</option>
+              ${subcontractorOptions.map((subcontractor) => `<option value="${escapeHtml(subcontractor)}" ${subcontractor === state.listFilters.subcontractor ? "selected" : ""}>${escapeHtml(subcontractor)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Expiry status</span>
+            <select id="filter-expiry-state">
+              <option value="">All statuses</option>
+              <option value="active" ${state.listFilters.expiryState === "active" ? "selected" : ""}>Valid</option>
+              <option value="due_soon" ${state.listFilters.expiryState === "due_soon" ? "selected" : ""}>Due within 30 days</option>
+              <option value="expired" ${state.listFilters.expiryState === "expired" ? "selected" : ""}>Expired</option>
+              <option value="not_applicable" ${state.listFilters.expiryState === "not_applicable" ? "selected" : ""}>No expiry date</option>
+            </select>
+          </label>
+          <div class="date-range-filter">
+            <span class="filter-label">Expiry date</span>
+            <button class="date-range-trigger ${state.listFilters.dateStart ? "active" : ""}"
+                    id="date-range-trigger" type="button"
+                    aria-haspopup="dialog" aria-expanded="${state.calendarOpen}">
+              <span aria-hidden="true">▦</span>
+              <strong>${escapeHtml(selectedDateLabel(config))}</strong>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            ${calendarMarkup(config)}
+          </div>
+          <label>
+            <span>Expiry order</span>
+            <select id="filter-order">
+              <option value="expiry_soonest" ${state.listFilters.order === "expiry_soonest" ? "selected" : ""}>Soonest first</option>
+              <option value="expiry_latest" ${state.listFilters.order === "expiry_latest" ? "selected" : ""}>Latest first</option>
+            </select>
+          </label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const distributionFilters = `
+        <div class="advanced-filters distribution-filters" aria-label="Form distribution filters">
+          <label>
+            <span>Assigned sites</span>
+            <select id="filter-site">
+              <option value="">All site groups</option>
+              ${siteOptions.map((site) => `<option value="${escapeHtml(site)}" ${site === state.listFilters.site ? "selected" : ""}>${escapeHtml(site)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Worker</span>
+            <select id="filter-worker">
+              <option value="">All workers</option>
+              ${workerOptions.map((worker) => `<option value="${escapeHtml(worker)}" ${worker === state.listFilters.worker ? "selected" : ""}>${escapeHtml(worker)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Form</span>
+            <select id="filter-form-name">
+              <option value="">All forms</option>
+              ${formOptions.map((formName) => `<option value="${escapeHtml(formName)}" ${formName === state.listFilters.formName ? "selected" : ""}>${escapeHtml(formName)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select id="filter-workflow-status">
+              <option value="">All statuses</option>
+              ${workflowStatusOptions.map((status) => `<option value="${escapeHtml(status)}" ${status === state.listFilters.workflowStatus ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+            </select>
+          </label>
+          <div class="date-range-filter">
+            <span class="filter-label">Assigned date</span>
+            <button class="date-range-trigger ${state.listFilters.dateStart ? "active" : ""}"
+                    id="date-range-trigger" type="button"
+                    aria-haspopup="dialog" aria-expanded="${state.calendarOpen}">
+              <span aria-hidden="true">◦</span>
+              <strong>${escapeHtml(selectedDateLabel(config))}</strong>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            ${calendarMarkup(config)}
+          </div>
+          <label>
+            <span>Assignment order</span>
+            <select id="filter-order">
+              <option value="newest" ${state.listFilters.order === "newest" ? "selected" : ""}>Newest first</option>
+              <option value="oldest" ${state.listFilters.order === "oldest" ? "selected" : ""}>Oldest first</option>
+            </select>
+          </label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const inductionFilters = `
+        <div class="advanced-filters catalog-filters" aria-label="Induction filters">
+          <label><span>Site</span><select id="filter-site"><option value="">All sites</option>${siteOptions.map((site) => `<option value="${escapeHtml(site)}" ${site === state.listFilters.site ? "selected" : ""}>${escapeHtml(site)}</option>`).join("")}</select></label>
+          <label><span>Status</span><select id="filter-record-status"><option value="">All statuses</option>${recordStatusOptions.map((status) => `<option value="${escapeHtml(status)}" ${status === state.listFilters.recordStatus ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></label>
+          <label><span>Title order</span><select id="filter-order"><option value="title_asc" ${state.listFilters.order === "title_asc" ? "selected" : ""}>A to Z</option><option value="title_desc" ${state.listFilters.order === "title_desc" ? "selected" : ""}>Z to A</option></select></label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const assetFilters = `
+        <div class="advanced-filters catalog-filters" aria-label="Asset filters">
+          <label><span>Company</span><select id="filter-company"><option value="">All companies</option>${companyOptions.map((company) => `<option value="${escapeHtml(company)}" ${company === state.listFilters.company ? "selected" : ""}>${escapeHtml(company)}</option>`).join("")}</select></label>
+          <label><span>Subcontractor</span><select id="filter-subcontractor"><option value="">All subcontractors</option>${subcontractorOptions.map((subcontractor) => `<option value="${escapeHtml(subcontractor)}" ${subcontractor === state.listFilters.subcontractor ? "selected" : ""}>${escapeHtml(subcontractor)}</option>`).join("")}</select></label>
+          <label><span>Name order</span><select id="filter-order"><option value="title_asc" ${state.listFilters.order === "title_asc" ? "selected" : ""}>A to Z</option><option value="title_desc" ${state.listFilters.order === "title_desc" ? "selected" : ""}>Z to A</option></select></label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const trainingFilters = `
+        <div class="advanced-filters catalog-filters" aria-label="Training catalogue filters">
+          <label><span>Snapshot indicator</span><select id="filter-record-status"><option value="">All indicators</option>${recordStatusOptions.map((status) => `<option value="${escapeHtml(status)}" ${status === state.listFilters.recordStatus ? "selected" : ""}>${escapeHtml(status === "-" ? "Not recorded" : status)}</option>`).join("")}</select></label>
+          <label><span>Question order</span><select id="filter-order"><option value="title_asc" ${state.listFilters.order === "title_asc" ? "selected" : ""}>A to Z</option><option value="title_desc" ${state.listFilters.order === "title_desc" ? "selected" : ""}>Z to A</option></select></label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const formDefinitionFilters = `
+        <div class="advanced-filters catalog-filters" aria-label="Custom form filters">
+          <label><span>Status</span><select id="filter-record-status"><option value="">All statuses</option>${recordStatusOptions.map((status) => `<option value="${escapeHtml(status)}" ${status === state.listFilters.recordStatus ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></label>
+          <label><span>Form order</span><select id="filter-order"><option value="title_asc" ${state.listFilters.order === "title_asc" ? "selected" : ""}>A to Z</option><option value="title_desc" ${state.listFilters.order === "title_desc" ? "selected" : ""}>Z to A</option></select></label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const workerFilters = `
+        <div class="advanced-filters worker-list-filters" aria-label="Worker filters">
+          <label>
+            <span>Site</span>
+            <select id="filter-site">
+              <option value="">All sites</option>
+              ${siteOptions
+                .map(
+                  (site) =>
+                    `<option value="${escapeHtml(site)}" ${site === state.listFilters.site ? "selected" : ""}>${escapeHtml(site)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Role / trade</span>
+            <select id="filter-role">
+              <option value="">All roles</option>
+              ${roleOptions
+                .map(
+                  (role) =>
+                    `<option value="${escapeHtml(role)}" ${role === state.listFilters.role ? "selected" : ""}>${escapeHtml(role)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Account status</span>
+            <select id="filter-account-status">
+              <option value="">All account states</option>
+              ${accountStatusOptions
+                .map(
+                  (status) =>
+                    `<option value="${escapeHtml(status)}" ${status === state.listFilters.accountStatus ? "selected" : ""}>${escapeHtml(status)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Safe Pass</span>
+            <select id="filter-safe-pass">
+              <option value="">All Safe Pass states</option>
+              ${safePassOptions
+                .map(
+                  (status) =>
+                    `<option value="${escapeHtml(status)}" ${status === state.listFilters.safePass ? "selected" : ""}>${escapeHtml(status)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Name order</span>
+            <select id="filter-order">
+              <option value="name_asc" ${state.listFilters.order === "name_asc" ? "selected" : ""}>A to Z</option>
+              <option value="name_desc" ${state.listFilters.order === "name_desc" ? "selected" : ""}>Z to A</option>
+            </select>
+          </label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const documentFilters = `
+        <div class="advanced-filters document-list-filters" aria-label="Document filters">
+          <label>
+            <span>Company</span>
+            <select id="filter-company">
+              <option value="">All companies</option>
+              ${companyOptions
+                .map(
+                  (company) =>
+                    `<option value="${escapeHtml(company)}" ${company === state.listFilters.company ? "selected" : ""}>${escapeHtml(company)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Subcontractor</span>
+            <select id="filter-subcontractor">
+              <option value="">All subcontractors</option>
+              ${subcontractorOptions
+                .map(
+                  (subcontractor) =>
+                    `<option value="${escapeHtml(subcontractor)}" ${subcontractor === state.listFilters.subcontractor ? "selected" : ""}>${escapeHtml(subcontractor)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>File type</span>
+            <select id="filter-file-type">
+              <option value="">All file types</option>
+              ${fileTypeOptions
+                .map(
+                  (fileType) =>
+                    `<option value="${escapeHtml(fileType)}" ${fileType === state.listFilters.fileType ? "selected" : ""}>${escapeHtml(fileType)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Title order</span>
+            <select id="filter-order">
+              <option value="title_asc" ${state.listFilters.order === "title_asc" ? "selected" : ""}>A to Z</option>
+              <option value="title_desc" ${state.listFilters.order === "title_desc" ? "selected" : ""}>Z to A</option>
+            </select>
+          </label>
+          <button class="clear-filters" id="clear-filters" type="button">Clear filters</button>
+        </div>
+      `;
+  const advancedFilters = config.filterMode === "hsa"
+    ? hsaFilters
+    : config.filterMode === "ga1"
+      ? ga1Filters
+      : config.filterMode === "risk_assessment"
+        ? riskAssessmentFilters
+      : config.filterMode === "distributions"
+        ? distributionFilters
+      : config.filterMode === "inductions"
+        ? inductionFilters
+      : config.filterMode === "assets"
+        ? assetFilters
+      : config.filterMode === "training"
+        ? trainingFilters
+      : config.filterMode === "forms"
+        ? formDefinitionFilters
+      : config.filterMode === "workers"
+        ? workerFilters
+        : config.filterMode === "documents"
+          ? documentFilters
+          : "";
 
   app.innerHTML = `
     ${pageHeader(
       config.title,
       "",
-      `<button class="button button-primary" id="add-record">＋ ${escapeHtml(config.addLabel)}</button>`,
+      config.allowCreate === false || !canEditLocalRecords()
+        ? ""
+        : `<button class="button button-primary" id="add-record">＋ ${escapeHtml(config.addLabel)}</button>`,
     )}
     <section class="card table-card">
       <div class="table-toolbar">
@@ -868,6 +2418,66 @@ function bindTableEvents(config) {
       openPdfPreview(link.getAttribute("href"), link.dataset.pdfName);
     });
   });
+  document.querySelectorAll("[data-image-preview]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      openImagePreview(link.getAttribute("href"), link.dataset.imageName);
+    });
+  });
+  document.querySelectorAll("[data-document-set]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.documentSet);
+      if (record) openDocumentSetViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-worker-profile]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.workerProfile);
+      if (record) openWorkerProfile(record);
+    });
+  });
+  document.querySelectorAll("[data-shared-document]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.sharedDocument);
+      if (record) openSharedDocumentViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-risk-assessment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.riskAssessment);
+      if (record) openRiskAssessmentViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-distribution]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.distribution);
+      if (record) openDistributionViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-induction-preview]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.inductionPreview);
+      if (record) openInductionViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-asset-details]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.assetDetails);
+      if (record) openAssetViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-training-details]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.trainingDetails);
+      if (record) openTrainingViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-form-definition]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.currentRows.find((row) => String(row.id) === button.dataset.formDefinition);
+      if (record) openFormDefinitionViewer(record);
+    });
+  });
   document.querySelector("#page-size")?.addEventListener("change", async (event) => {
     state.pageSize = Number(event.target.value);
     state.page = 1;
@@ -882,9 +2492,32 @@ function bindTableEvents(config) {
       await renderList(config);
     }, 250);
   });
-  ["site", "worker", "order"].forEach((filterName) => {
+  [
+    "site",
+    "worker",
+    "expiry-state",
+    "role",
+    "account-status",
+    "safe-pass",
+    "company",
+    "subcontractor",
+    "file-type",
+    "form-name",
+    "workflow-status",
+    "record-status",
+    "order",
+  ].forEach((filterName) => {
     document.querySelector(`#filter-${filterName}`)?.addEventListener("change", async (event) => {
-      state.listFilters[filterName] = event.target.value;
+      const stateKey = {
+        "expiry-state": "expiryState",
+        "account-status": "accountStatus",
+        "safe-pass": "safePass",
+        "file-type": "fileType",
+        "form-name": "formName",
+        "workflow-status": "workflowStatus",
+        "record-status": "recordStatus",
+      }[filterName] || filterName;
+      state.listFilters[stateKey] = event.target.value;
       state.calendarOpen = false;
       state.page = 1;
       await renderList(config);
@@ -935,13 +2568,7 @@ function bindTableEvents(config) {
     await renderList(config);
   });
   document.querySelector("#clear-filters")?.addEventListener("click", async () => {
-    state.listFilters = {
-      site: "",
-      worker: "",
-      dateStart: "",
-      dateEnd: "",
-      order: "newest",
-    };
+    state.listFilters = defaultListFilters(config);
     state.calendarOpen = false;
     state.page = 1;
     await renderList(config);
@@ -1471,6 +3098,7 @@ function formatBytes(bytes) {
 }
 
 function renderProfile() {
+  const user = state.auth.user || {};
   app.innerHTML = `
     ${pageHeader("My Profile")}
     <section class="card form-card">
@@ -1478,9 +3106,9 @@ function renderProfile() {
         <div class="form-grid">
           ${[
             { name: "company_name", label: "Company Name", required: true, value: "Local Company" },
-            { name: "email", label: "Email", type: "email", required: true, value: "admin@example.test" },
-            { name: "admin_name", label: "Company Admin Name", required: true, value: "Local Administrator" },
-            { name: "admin_email", label: "Company Admin Email", type: "email", value: "admin@example.test" },
+            { name: "email", label: "Email", type: "email", required: true, value: user.email || "local@kompliance.test" },
+            { name: "admin_name", label: "Company Admin Name", required: true, value: user.name || "Local Administrator" },
+            { name: "admin_email", label: "Company Admin Email", type: "email", value: user.email || "local@kompliance.test" },
             { name: "phone", label: "Phone Number", value: "+353" },
             { name: "address", label: "Address", full: true, value: "Local development address" },
           ]
@@ -1515,16 +3143,264 @@ function renderChangePassword() {
       </form>
     </section>
   `;
-  document.querySelector("#password-form").addEventListener("submit", (event) => {
+  document.querySelector("#password-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     if (form.get("new") !== form.get("confirm")) {
       showToast("New passwords do not match.", "error");
       return;
     }
-    event.currentTarget.reset();
-    showToast("Password changed in the local prototype only.");
+    if (!state.auth.enabled) {
+      event.currentTarget.reset();
+      showToast("Application authentication is disabled in this local process.");
+      return;
+    }
+    try {
+      await api("/api/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ current: form.get("current"), new: form.get("new") }),
+      });
+      event.currentTarget.reset();
+      showToast("Password changed securely.");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
   });
+}
+
+async function renderAuditLog() {
+  const result = await api("/api/audit?limit=250");
+  const rows = result.data || [];
+  app.innerHTML = `
+    ${pageHeader("Audit log", "Local security and data-change events")}
+    <section class="card table-card">
+      <div class="audit-summary"><strong>${rows.length.toLocaleString()}</strong><span>Most recent recorded events</span></div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>Date</th><th>Actor</th><th>Action</th><th>Resource</th><th>Record</th><th>Summary</th></tr></thead>
+          <tbody>${rows.length ? rows.map((row, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(displayDate(row.created_at) || row.created_at)}</td><td>${escapeHtml(row.actor)}</td><td><span class="status">${escapeHtml(row.action)}</span></td><td>${escapeHtml(row.resource)}</td><td>${escapeHtml(row.record_id || "—")}</td><td>${escapeHtml(row.summary)}</td></tr>`).join("") : `<tr><td class="table-empty" colspan="7">No audit events recorded yet.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+async function renderUserManagement() {
+  const result = await api("/api/users");
+  const users = result.data || [];
+  app.innerHTML = `
+    ${pageHeader("Access management", "Application accounts and role permissions")}
+    <div class="security-role-grid">
+      <article><span>Viewer</span><strong>Read-only access</strong><small>Can view protected and local records.</small></article>
+      <article><span>Editor</span><strong>Local workflow access</strong><small>Can create and update local-only records.</small></article>
+      <article><span>Administrator</span><strong>Security ownership</strong><small>Can manage users, delete local records and review audit events.</small></article>
+    </div>
+    <section class="card table-card">
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>State</th><th>Created</th></tr></thead><tbody>${users.map((user, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.email)}</td><td><span class="status">${escapeHtml(user.role)}</span></td><td>${user.active ? "Active" : "Disabled"}</td><td>${escapeHtml(displayDate(user.created_at))}</td></tr>`).join("")}</tbody></table></div>
+    </section>
+    <section class="card form-card compact-form-card">
+      <div class="local-section-heading"><span>Administrator action</span><h2>Create an application account</h2><p>The password is stored only as a PBKDF2 hash.</p></div>
+      <form id="create-user-form"><div class="form-grid">
+        ${fieldMarkup({ name: "name", label: "Name", required: true })}
+        ${fieldMarkup({ name: "email", label: "Email", type: "email", required: true })}
+        ${fieldMarkup({ name: "role", label: "Role", type: "select", options: ["viewer", "editor", "admin"], required: true })}
+        ${fieldMarkup({ name: "password", label: "Temporary password (12+ characters)", type: "password", required: true })}
+      </div><div class="form-actions"><button class="button button-primary" type="submit">Create account</button></div></form>
+    </section>
+  `;
+  document.querySelector("#create-user-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    try {
+      await api("/api/users", { method: "POST", body: JSON.stringify(values) });
+      showToast("Application account created.");
+      await renderUserManagement();
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+}
+
+function localSnapshotDate() {
+  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
+}
+
+async function renderLocalWorkflows() {
+  const [workerResult, formResult, inductionResult, distributionResult, uploadResult, completionResult, submissionResult] = await Promise.all([
+    api("/api/resources/workers?limit=5000"),
+    api("/api/resources/forms?limit=5000"),
+    api("/api/resources/inductions?limit=5000"),
+    api("/api/resources/distributions?limit=5000"),
+    api("/api/resources/local_uploads?limit=5000"),
+    api("/api/resources/local_induction_completions?limit=5000"),
+    api("/api/resources/local_submissions?limit=5000"),
+  ]);
+  const workers = workerResult.data || [];
+  const forms = formResult.data || [];
+  const inductions = inductionResult.data || [];
+  const localDistributions = (distributionResult.data || []).filter((row) => !row._read_only && row.local_only);
+  const uploads = uploadResult.data || [];
+  const completions = completionResult.data || [];
+  const submissions = submissionResult.data || [];
+  const editable = canEditLocalRecords();
+  const workerOptions = workers.map((worker) => `<option value="${escapeHtml(worker.name)}">${escapeHtml(worker.name)} · ${escapeHtml(worker.sites || "No site")}</option>`).join("");
+  app.innerHTML = `
+    ${pageHeader("Controlled local workflows", "New activity stays inside this clone and never writes to the imported source")}
+    <div class="local-workflow-boundary"><strong>Isolation boundary</strong><span>Imported customer records remain immutable. Every action below creates separately marked local-only data and is written to the audit log.</span></div>
+    ${editable ? "" : `<div class="worker-profile-notice">Your Viewer role can inspect local workflow history but cannot create or change records.</div>`}
+    <section class="local-workflow-grid">
+      <article class="card workflow-card">
+        <div class="local-section-heading"><span>Documents</span><h2>Upload a local version</h2><p>PDF, office, CSV and image files up to 10 MB.</p></div>
+        <form id="local-upload-form"><label><span>Document title</span><input name="title" required ${editable ? "" : "disabled"} /></label><label><span>File</span><input name="file" type="file" accept=".pdf,.csv,.xls,.xlsx,.doc,.docx,.png,.jpg,.jpeg" required ${editable ? "" : "disabled"} /></label><button class="button button-primary" ${editable ? "" : "disabled"}>Upload locally</button></form>
+        <div class="workflow-history"><strong>${uploads.length} local version${uploads.length === 1 ? "" : "s"}</strong>${uploads.slice(0, 5).map((row) => `<a href="/local-files/uploads/${encodeURIComponent(row.stored_name)}" target="_blank" rel="noopener"><span>v${row.version}</span><div><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.original_name)} · ${formatBytes(row.size)}</small></div></a>`).join("") || `<p>No local uploads yet.</p>`}</div>
+      </article>
+      <article class="card workflow-card">
+        <div class="local-section-heading"><span>Forms</span><h2>Create a local assignment</h2><p>Links a real definition to a worker without contacting production.</p></div>
+        <form id="local-assignment-form"><label><span>Worker</span><select name="worker" required ${editable ? "" : "disabled"}>${workerOptions}</select></label><label><span>Form</span><select name="form" required ${editable ? "" : "disabled"}>${forms.map((form) => `<option value="${escapeHtml(form.name)}">${escapeHtml(form.name)}</option>`).join("")}</select></label><label><span>Site reference</span><input name="sites" required ${editable ? "" : "disabled"} /></label><button class="button button-primary" ${editable ? "" : "disabled"}>Create local assignment</button></form>
+        <div class="workflow-history"><strong>${localDistributions.length} local assignment${localDistributions.length === 1 ? "" : "s"}</strong>${localDistributions.slice(0, 5).map((row) => `<div class="workflow-history-row"><span>${escapeHtml(row.status)}</span><div><strong>${escapeHtml(row.worker)}</strong><small>${escapeHtml(row.form)}</small></div></div>`).join("") || `<p>No local assignments yet.</p>`}</div>
+      </article>
+      <article class="card workflow-card">
+        <div class="local-section-heading"><span>Submissions</span><h2>Record a local response</h2><p>Available only for assignments created in this local workspace.</p></div>
+        <form id="local-submission-form"><label><span>Local assignment</span><select name="distribution_id" required ${editable && localDistributions.length ? "" : "disabled"}>${localDistributions.map((row) => `<option value="${row.id}">${escapeHtml(row.worker)} · ${escapeHtml(row.form)}</option>`).join("")}</select></label><label><span>Response notes / JSON</span><textarea name="answers" required ${editable && localDistributions.length ? "" : "disabled"}></textarea></label><label><span>Score (optional)</span><input name="score" placeholder="e.g. 100 %" ${editable && localDistributions.length ? "" : "disabled"} /></label><button class="button button-primary" ${editable && localDistributions.length ? "" : "disabled"}>Record submission</button></form>
+        <div class="workflow-history"><strong>${submissions.length} local submission${submissions.length === 1 ? "" : "s"}</strong>${submissions.slice(0, 5).map((row) => `<div class="workflow-history-row"><span>${escapeHtml(row.score || "—")}</span><div><strong>${escapeHtml(row.worker)}</strong><small>${escapeHtml(row.form)} · ${escapeHtml(row.submitted_date)}</small></div></div>`).join("") || `<p>No local submissions yet.</p>`}</div>
+      </article>
+      <article class="card workflow-card">
+        <div class="local-section-heading"><span>Inductions</span><h2>Record completion and certificate</h2><p>Creates a local PDF certificate with an audit event.</p></div>
+        <form id="local-certificate-form"><label><span>Worker</span><select name="worker" required ${editable ? "" : "disabled"}>${workerOptions}</select></label><label><span>Induction</span><select name="induction" required ${editable ? "" : "disabled"}>${inductions.map((induction) => `<option value="${escapeHtml(induction.title)}" data-site="${escapeHtml(induction.site)}">${escapeHtml(induction.title)}</option>`).join("")}</select></label><button class="button button-primary" ${editable ? "" : "disabled"}>Generate local certificate</button></form>
+        <div class="workflow-history"><strong>${completions.length} local certificate${completions.length === 1 ? "" : "s"}</strong>${completions.slice(0, 5).map((row) => `<a href="/local-files/certificates/${encodeURIComponent(row.certificate_file)}" target="_blank" rel="noopener"><span>PDF</span><div><strong>${escapeHtml(row.worker)}</strong><small>${escapeHtml(row.induction)}</small></div></a>`).join("") || `<p>No local certificates yet.</p>`}</div>
+      </article>
+    </section>
+  `;
+  if (!editable) return;
+  document.querySelector("#local-upload-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const file = form.get("file");
+    try {
+      const response = await fetch("/api/local/upload", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-CSRF-Token": state.auth.csrfToken, "X-Upload-Title": encodeURIComponent(form.get("title")), "X-File-Name": encodeURIComponent(file.name) }, body: file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Upload failed");
+      showToast("Local document version uploaded.");
+      await renderLocalWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#local-assignment-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    try {
+      await api("/api/resources/distributions", { method: "POST", body: JSON.stringify({ ...values, assigned_date: localSnapshotDate(), submitted_date: "-", score: "-", status: "Pending", source: "local controlled workspace", local_only: true }) });
+      showToast("Local form assignment created.");
+      await renderLocalWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#local-submission-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const distribution = localDistributions.find((row) => String(row.id) === String(values.distribution_id));
+    if (!distribution) return;
+    const submittedDate = localSnapshotDate();
+    try {
+      await api("/api/resources/local_submissions", { method: "POST", body: JSON.stringify({ distribution_id: distribution.id, worker: distribution.worker, form: distribution.form, answers: values.answers, score: values.score || "-", submitted_date: submittedDate, source: "local controlled workspace", local_only: true }) });
+      await api(`/api/resources/distributions/${distribution.id}`, { method: "PUT", body: JSON.stringify({ ...distribution, status: "Submitted", submitted_date: submittedDate, score: values.score || "-" }) });
+      showToast("Local submission recorded.");
+      await renderLocalWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#local-certificate-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const inductionSelect = event.currentTarget.elements.induction;
+    try {
+      await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ worker: form.get("worker"), induction: form.get("induction"), site: inductionSelect.selectedOptions[0]?.dataset.site || "" }) });
+      showToast("Local induction certificate generated.");
+      await renderLocalWorkflows();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+}
+
+function applyAuthContext() {
+  const user = state.auth.user || {};
+  const name = user.name || "Local user";
+  const firstName = name.split(/\s+/)[0] || "User";
+  document.querySelector(".account-copy strong").textContent = firstName;
+  document.querySelector(".account-copy small").textContent = user.role
+    ? `${user.role[0].toUpperCase()}${user.role.slice(1)}`
+    : "Viewer";
+  document.querySelector(".avatar").textContent = firstName[0]?.toUpperCase() || "U";
+  document.querySelector("#audit-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#users-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#logout-action")?.classList.toggle("hidden", !state.auth.enabled);
+}
+
+function renderAuthScreen(setupRequired) {
+  document.body.classList.add("auth-screen");
+  const mode = setupRequired ? "setup" : "login";
+  app.innerHTML = `
+    <section class="auth-panel" aria-labelledby="auth-title">
+      <div class="auth-brand"><img src="/static/favicon.svg" alt="" /><span>Kompliance</span></div>
+      <span class="auth-eyebrow">${setupRequired ? "Secure first-time setup" : "Application sign in"}</span>
+      <h1 id="auth-title">${setupRequired ? "Create the initial administrator" : "Welcome back"}</h1>
+      <p>${setupRequired ? "This creates the first local application account. Imported customer records will remain read-only." : "Sign in to the secured local Kompliance workspace."}</p>
+      <form id="auth-form">
+        ${setupRequired ? `<label><span>Name</span><input name="name" autocomplete="name" required /></label>` : ""}
+        <label><span>Email</span><input name="email" type="email" autocomplete="username" required /></label>
+        <label><span>Password</span><input name="password" type="password" autocomplete="${setupRequired ? "new-password" : "current-password"}" minlength="12" required /></label>
+        ${setupRequired ? `<label><span>Confirm password</span><input name="confirm" type="password" autocomplete="new-password" minlength="12" required /></label>` : ""}
+        <div class="auth-error" id="auth-error" role="alert"></div>
+        <button class="button button-primary" type="submit">${setupRequired ? "Create administrator" : "Sign in"}</button>
+      </form>
+      <small>Protected by the outer gateway and application-level session security.</small>
+    </section>
+  `;
+  setLoading(false);
+  document.querySelector("#auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const error = document.querySelector("#auth-error");
+    if (setupRequired && form.get("password") !== form.get("confirm")) {
+      error.textContent = "Passwords do not match.";
+      return;
+    }
+    try {
+      const result = await api(`/api/auth/${mode}`, {
+        method: "POST",
+        body: JSON.stringify({ name: form.get("name"), email: form.get("email"), password: form.get("password") }),
+      });
+      state.auth.authenticated = true;
+      state.auth.setupRequired = false;
+      state.auth.user = result.user;
+      state.auth.csrfToken = result.csrf_token || "";
+      document.body.classList.remove("auth-screen");
+      applyAuthContext();
+      await route();
+    } catch (authError) {
+      error.textContent = authError.message;
+    }
+  });
+}
+
+async function initializeAuth() {
+  setLoading(true);
+  try {
+    const status = await api("/api/auth/status");
+    state.auth = {
+      enabled: Boolean(status.enabled),
+      authenticated: Boolean(status.authenticated),
+      setupRequired: Boolean(status.setup_required),
+      user: status.user,
+      csrfToken: status.csrf_token || "",
+    };
+    if (state.auth.enabled && (!state.auth.authenticated || state.auth.setupRequired)) {
+      renderAuthScreen(state.auth.setupRequired);
+      return;
+    }
+    document.body.classList.remove("auth-screen");
+    applyAuthContext();
+    await route();
+  } catch (error) {
+    app.innerHTML = `<section class="card error-card"><h2>Unable to initialise security</h2><p>${escapeHtml(error.message)}</p></section>`;
+    setLoading(false);
+  }
 }
 
 function renderContact() {
@@ -1563,13 +3439,7 @@ async function route() {
     } else if (LIST_ROUTES[path]) {
       state.search = "";
       state.page = 1;
-      state.listFilters = {
-        site: "",
-        worker: "",
-        dateStart: "",
-        dateEnd: "",
-        order: "newest",
-      };
+      state.listFilters = defaultListFilters(LIST_ROUTES[path]);
       state.calendarOpen = false;
       await renderList(LIST_ROUTES[path]);
     } else if (path === "/archive") {
@@ -1578,6 +3448,12 @@ async function route() {
       renderProfile();
     } else if (path === "/change-password") {
       renderChangePassword();
+    } else if (path === "/audit") {
+      await renderAuditLog();
+    } else if (path === "/users") {
+      await renderUserManagement();
+    } else if (path === "/local-workflows") {
+      await renderLocalWorkflows();
     } else if (path === "/contact-us") {
       renderContact();
     } else {
@@ -1655,6 +3531,19 @@ document.querySelector("#account-trigger").addEventListener("click", () => {
   document.querySelector("#account-dropdown").classList.toggle("open");
 });
 
+document.querySelector("#logout-action")?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  try {
+    await api("/api/auth/logout", { method: "POST", body: "{}" });
+  } finally {
+    state.auth.authenticated = false;
+    state.auth.user = null;
+    state.auth.csrfToken = "";
+    history.replaceState({}, "", "/");
+    renderAuthScreen(false);
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeSidebar();
@@ -1669,4 +3558,4 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("popstate", route);
 document.querySelector("#year").textContent = new Date().getFullYear();
 bindRouteLinks();
-route();
+initializeAuth();

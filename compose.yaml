@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
+      KOMPLIANCE_APP_AUTH: "1"
     expose:
       - "8090"
     volumes:

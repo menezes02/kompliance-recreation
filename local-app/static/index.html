@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#07365c" />
     <title>Kompliance Local</title>
     <link rel="icon" href="/static/favicon.svg" />
-    <link rel="stylesheet" href="/static/styles.css?v=14" />
+    <link rel="stylesheet" href="/static/styles.css?v=26" />
   </head>
   <body>
     <div id="loading" class="loading-screen" aria-live="polite">
@@ -71,6 +71,7 @@
 
           <a href="/document" data-route><span class="nav-icon">▱</span><span>Documents</span></a>
           <a href="/archive" data-route><span class="nav-icon">◴</span><span>Source archive</span></a>
+          <a href="/local-workflows" data-route><span class="nav-icon">＋</span><span>Local workflows</span></a>
         </nav>
 
         <div class="sidebar-footer">
@@ -102,7 +103,10 @@
               <div class="account-dropdown" id="account-dropdown">
                 <a href="/company-profile" data-route>Company profile</a>
                 <a href="/change-password" data-route>Security settings</a>
+                <a href="/audit" data-route id="audit-link">Audit log</a>
+                <a href="/users" data-route id="users-link">Access management</a>
                 <a href="/contact-us" data-route>Contact support</a>
+                <a href="#" id="logout-action">Sign out</a>
               </div>
             </div>
           </div>
@@ -115,6 +119,6 @@
 
     <div id="modal-root"></div>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
-    <script src="/static/app.js?v=14" defer></script>
+    <script src="/static/app.js?v=26" defer></script>
   </body>
 </html>

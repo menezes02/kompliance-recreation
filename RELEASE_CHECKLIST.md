@@ -1,0 +1,66 @@
+# Kompliance Release Checklist
+
+Status: **HOLD — package verified locally, production release not yet authorised**
+
+This checklist protects the existing customer-facing installation and preserves the imported source archive. A production release must not begin until every item in the approval section is recorded.
+
+## Release approval
+
+- [ ] Product owner has approved the release scope and named the approver.
+- [ ] Technical owner has approved the deployment window and named the approver.
+- [ ] The Git commit or tag to deploy is recorded.
+- [ ] A rollback Git commit or tag is recorded.
+- [ ] The server operator has confirmed a maintenance window.
+
+## Backup before deployment
+
+- [ ] Back up the current application directory or Docker image reference.
+- [ ] Back up the current `production-data` volume/directory.
+- [ ] Back up `source-archive` without changing its contents.
+- [ ] Back up the current reverse-proxy configuration and Basic Auth file.
+- [ ] Verify that each backup can be listed and read before continuing.
+- [ ] Record backup locations and timestamps in the release notes.
+
+## Configuration and security
+
+- [ ] Keep `.env`, password files, databases, logs, and local uploads out of Git.
+- [ ] Confirm `KOMPLIANCE_APP_AUTH=1` in the deployed application container.
+- [ ] Confirm HTTPS and the expected hostname.
+- [ ] Confirm container names remain `kompliance_app_example` and `kompliance_gateway_example`.
+- [ ] Confirm the application data volume is writable only where local records are stored.
+- [ ] Confirm the imported source archive is mounted read-only.
+- [ ] Create the first application administrator through the one-time setup screen.
+- [ ] Store administrator credentials in the approved password manager.
+
+## Deployment
+
+- [ ] Pull the approved commit or tag.
+- [ ] Run `docker-compose config` and review the resolved configuration.
+- [ ] Build the application image.
+- [ ] Start the stack without removing unrelated containers.
+- [ ] Check container health and logs for startup errors.
+
+## Smoke test
+
+- [ ] Anonymous API access is rejected.
+- [ ] Admin login and logout work.
+- [ ] Viewer, editor, and admin permissions behave as documented.
+- [ ] Dashboard totals load.
+- [ ] GA1, GA2, and GA3 records can be searched, filtered, and viewed.
+- [ ] An archived PDF opens in the browser viewer and can be downloaded.
+- [ ] Induction, asset QR, training, and custom-form views load.
+- [ ] A local-only assignment and submission can be created by an authorised role.
+- [ ] A local certificate PDF can be generated and opened.
+- [ ] Audit events appear for authenticated mutations.
+- [ ] No imported source record can be edited or deleted.
+
+## Rollback trigger and procedure
+
+Rollback immediately if authentication fails, imported records become mutable, archived files cannot be served, or the main workflows fail their smoke tests.
+
+1. Stop only the Kompliance containers.
+2. Restore the recorded application image/commit and configuration.
+3. Restore local writable data only if a migration changed it.
+4. Keep the imported source archive unchanged.
+5. Restart the prior stack and repeat the read-only smoke checks.
+6. Record the incident and do not retry the release without a new approval.

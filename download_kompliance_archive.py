@@ -2,8 +2,10 @@
 """Read-only authenticated archive downloader for Kompliance.
 
 Credentials must be supplied through KOMPLIANCE_EMAIL and
-KOMPLIANCE_PASSWORD. The script performs GET requests after login and never
-calls create, update, assignment, approval, or delete endpoints.
+KOMPLIANCE_PASSWORD. Network requests are restricted to the production origin,
+GET requests, the login POST, and one explicitly allowlisted read-only GA1
+DataTables POST. Create, update, assignment, approval, and delete endpoints are
+blocked in code.
 """
 
 from __future__ import annotations
@@ -29,6 +31,12 @@ from typing import Any
 
 BASE_URL = "https://kompliance.lgsafety.ie"
 USER_AGENT = "KomplianceReadOnlyArchiver/1.0"
+BASE_ORIGIN = urllib.parse.urlsplit(BASE_URL)
+READ_ONLY_ACK_VALUE = "I_UNDERSTAND_READ_ONLY"
+ALLOWED_NON_GET_REQUESTS = {
+    ("POST", "/login"),
+    ("POST", "/ga1/documents"),
+}
 
 HSA_ENDPOINTS = {
     "ga2": "/ga2/form",
@@ -89,6 +97,62 @@ SAFE_EXISTING_EXTENSIONS = {
     ".xlsx",
     ".zip",
 }
+
+
+def validate_remote_request(url: str, method: str = "GET") -> str:
+    """Fail closed unless a request is proven read-only and same-origin."""
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme.lower() != BASE_ORIGIN.scheme.lower()
+        or parsed.netloc.lower() != BASE_ORIGIN.netloc.lower()
+    ):
+        raise RuntimeError("Blocked request outside the approved Kompliance origin")
+    normalized_method = method.upper()
+    path = urllib.parse.unquote(parsed.path or "/")
+    if normalized_method not in {"GET", "HEAD"} and (
+        normalized_method,
+        path,
+    ) not in ALLOWED_NON_GET_REQUESTS:
+        raise RuntimeError(
+            f"Blocked non-read-only production request: {normalized_method} {path}"
+        )
+    return url
+
+
+def validate_remote_response(url: str) -> str:
+    """Reject cross-origin redirects before processing returned content."""
+    return validate_remote_request(url, "GET")
+
+
+def require_operation_authorization(operation: str) -> dict[str, str]:
+    """Require a deliberate read-only acknowledgement and approval reference."""
+    operation = operation.strip().lower()
+    if operation not in {"download", "export"}:
+        raise RuntimeError(f"Unsupported protected operation: {operation}")
+    if os.environ.get("KOMPLIANCE_READ_ONLY_ACK") != READ_ONLY_ACK_VALUE:
+        raise RuntimeError(
+            "Set KOMPLIANCE_READ_ONLY_ACK=I_UNDERSTAND_READ_ONLY before any "
+            "production read operation"
+        )
+    authorization_flag = f"KOMPLIANCE_{operation.upper()}_AUTHORIZED"
+    if os.environ.get(authorization_flag) != "YES":
+        raise RuntimeError(
+            f"Set {authorization_flag}=YES only after written data-owner approval"
+        )
+    authorized_by = os.environ.get("KOMPLIANCE_AUTHORIZED_BY", "").strip()
+    authorization_reference = os.environ.get(
+        "KOMPLIANCE_AUTHORIZATION_REFERENCE", ""
+    ).strip()
+    if not authorized_by or not authorization_reference:
+        raise RuntimeError(
+            "KOMPLIANCE_AUTHORIZED_BY and KOMPLIANCE_AUTHORIZATION_REFERENCE "
+            "are required"
+        )
+    return {
+        "operation": operation,
+        "authorized_by": authorized_by,
+        "authorization_reference": authorization_reference,
+    }
 
 
 def extract_csrf(html: str) -> str:
@@ -155,6 +219,7 @@ class KomplianceSession:
         self.cookie_header = ""
 
     def login(self) -> None:
+        validate_remote_request(BASE_URL + "/login", "GET")
         request = urllib.request.Request(
             BASE_URL + "/login",
             headers={"User-Agent": USER_AGENT},
@@ -170,7 +235,7 @@ class KomplianceSession:
             }
         ).encode()
         request = urllib.request.Request(
-            BASE_URL + "/login",
+            validate_remote_request(BASE_URL + "/login", "POST"),
             data=body,
             method="POST",
             headers={
@@ -181,6 +246,7 @@ class KomplianceSession:
         with self.opener.open(request, timeout=30) as response:
             response.read()
             final_url = response.geturl()
+        validate_remote_response(final_url)
         if urllib.parse.urlparse(final_url).path == "/login":
             raise RuntimeError("Kompliance login did not succeed")
         self.cookie_header = "; ".join(
@@ -188,11 +254,12 @@ class KomplianceSession:
         )
 
     def get_text(self, url: str) -> str:
+        request_url = validate_remote_request(absolute_url(url), "GET")
         last_error: Exception | None = None
         for attempt in range(1, 5):
             try:
                 request = urllib.request.Request(
-                    absolute_url(url),
+                    request_url,
                     headers={
                         "User-Agent": USER_AGENT,
                         "Cookie": self.cookie_header,
@@ -202,6 +269,7 @@ class KomplianceSession:
                     data = response.read()
                     final_url = response.geturl()
                     content_type = response.headers.get_content_type()
+                validate_remote_response(final_url)
                 break
             except Exception as error:  # noqa: BLE001 - retry transient network errors
                 last_error = error
@@ -217,7 +285,10 @@ class KomplianceSession:
         return data.decode("utf-8", "replace")
 
     def get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        url = absolute_url(path) + "?" + urllib.parse.urlencode(params)
+        url = validate_remote_request(
+            absolute_url(path) + "?" + urllib.parse.urlencode(params),
+            "GET",
+        )
         last_error: Exception | None = None
         for attempt in range(1, 5):
             try:
@@ -233,6 +304,7 @@ class KomplianceSession:
                 with urllib.request.urlopen(request, timeout=45) as response:
                     data = response.read()
                     final_url = response.geturl()
+                validate_remote_response(final_url)
                 break
             except Exception as error:  # noqa: BLE001 - retry transient network errors
                 last_error = error
@@ -246,12 +318,13 @@ class KomplianceSession:
         return json.loads(data.decode("utf-8", "replace"))
 
     def post_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        url = validate_remote_request(absolute_url(path), "POST")
         body = urllib.parse.urlencode(params).encode()
         last_error: Exception | None = None
         for attempt in range(1, 5):
             try:
                 request = urllib.request.Request(
-                    absolute_url(path),
+                    url,
                     data=body,
                     method="POST",
                     headers={
@@ -265,6 +338,7 @@ class KomplianceSession:
                 with self.opener.open(request, timeout=45) as response:
                     data = response.read()
                     final_url = response.geturl()
+                validate_remote_response(final_url)
                 break
             except Exception as error:  # noqa: BLE001 - retry transient network errors
                 last_error = error
@@ -569,6 +643,7 @@ def download_one(
     for attempt in range(1, retries + 1):
         temp_path: Path | None = None
         try:
+            validate_remote_request(task["url"], "GET")
             request = urllib.request.Request(
                 task["url"],
                 headers={
@@ -578,6 +653,7 @@ def download_one(
             )
             with urllib.request.urlopen(request, timeout=90) as response:
                 final_url = response.geturl()
+                validate_remote_response(final_url)
                 if urllib.parse.urlparse(final_url).path == "/login":
                     raise RuntimeError("Session expired during download")
                 extension = extension_from_headers(
@@ -634,6 +710,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    try:
+        authorization = require_operation_authorization("download")
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        return 2
     email = os.environ.get("KOMPLIANCE_EMAIL")
     password = os.environ.get("KOMPLIANCE_PASSWORD")
     if not email or not password:
@@ -648,7 +729,11 @@ def main() -> int:
 
     session = KomplianceSession(email, password)
     session.login()
-    print("Authenticated. Building read-only download inventory...", flush=True)
+    print(
+        "Authenticated for an approved read-only download "
+        f"({authorization['authorization_reference']}). Building inventory...",
+        flush=True,
+    )
     tasks, source_counts = collect_archive_tasks(session)
     print(
         json.dumps(

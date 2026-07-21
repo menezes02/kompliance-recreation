@@ -17,7 +17,12 @@ private. Production access credentials, SSH credentials, generated HTTP Basic Au
 files, logs, and runtime databases are intentionally excluded from Git.
 
 The original production application is treated as read-only. See
-`READ_ONLY_POLICY.md`.
+`READ_ONLY_POLICY.md`. Approval responsibilities for exports, downloads, demo
+publication, migration, and deployment are defined in `DATA_GOVERNANCE.md`.
+
+Imported snapshot records are immutable in both the local API and interface.
+Production-reading scripts require the acknowledgement and approval-reference
+environment values documented in `.env.example`.
 
 ## Run locally
 
@@ -47,4 +52,3 @@ The stack expects an existing external Docker network named `proxy`.
 The production snapshot is stored in `production-data/records.json`. The
 application imports that snapshot into its runtime SQLite database on startup and
 does not fall back to demo data when the snapshot is present.
-
