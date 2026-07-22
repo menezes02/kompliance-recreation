@@ -38,9 +38,6 @@ services:
       - /tmp:size=64m,mode=1777
   operations:
     image: kompliance-app
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: kompliance_operations_example
     restart: unless-stopped
     depends_on:

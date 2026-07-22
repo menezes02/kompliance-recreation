@@ -27,9 +27,6 @@ services:
 
   operations:
     image: kompliance-app
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: kompliance_operations_example
     restart: "no"
     depends_on:
