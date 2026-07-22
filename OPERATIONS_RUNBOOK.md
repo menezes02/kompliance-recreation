@@ -33,6 +33,24 @@ docker-compose -f compose.local.yaml exec app python /app/backup_kompliance.py -
 docker-compose -f compose.local.yaml exec app python /app/verify_kompliance_backup.py /app/local-app/data/backups/kompliance-local.zip
 ```
 
+The production compose project also runs `kompliance_operations_example`. It
+performs a readiness probe every minute and creates a checksum-verified backup
+of writable local data every 24 hours by default. Backups are stored under
+`local-app/data/backups/automated` in the named volume. The service never
+includes, modifies or deletes the protected source archive, production
+snapshot, or older backups. Its latest state is visible under **System &
+privacy**.
+
+Configure only through the untracked deployment environment:
+
+```text
+KOMPLIANCE_AUTOMATED_BACKUPS=1
+KOMPLIANCE_BACKUP_INTERVAL_SECONDS=86400
+KOMPLIANCE_MONITOR_INTERVAL_SECONDS=60
+```
+
+Verify the runner independently with `python verify_operations.py`.
+
 To rehearse a restore, provide a new or empty target directory. The verifier refuses non-empty targets and never modifies the live data directory.
 
 ```powershell
@@ -60,6 +78,24 @@ The scheduler deduplicates reminders for the same resource, record and due date.
 - `GET /api/health/ready` verifies database access and required data roots.
 - **System & privacy** runs SQLite quick-check, shows protected/local record counts, free space, sessions, audit count, email state and scheduler state.
 - Review container logs and the application audit log after any release or delivery run.
+- `kompliance_operations_example` persists its last readiness check, verified
+  backup reference, checksum and error state for the administrator dashboard.
+
+## Multi-factor authentication
+
+Administrators, editors and viewers can enrol a TOTP-compatible authenticator
+under **Change password**. Enrolment requires the current password and one valid
+authenticator code. Ten one-time backup codes are shown once. Enabling or
+disabling MFA revokes the account's other sessions and is written to the audit
+log. Administrators can see MFA status, but never secrets or backup codes, in
+**Access management**.
+
+## Integration API safeguards
+
+Bearer-token API calls are limited per token (120 requests/minute by default).
+The shared-worker list uses `page` and `page_size`, capped at 100 records per
+response, and exposes rate-limit headers. Override the limit only through
+`KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE`.
 
 ## Retention and privacy
 

@@ -151,6 +151,44 @@ def main() -> int:
             )
             upload_file = server_module.DATA_ROOT / "uploads" / upload.get("stored_name", "missing")
             certificate_file = server_module.DATA_ROOT / "certificates" / certificate.get("certificate_file", "missing")
+            mfa_initial_code, mfa_initial, _ = request_json(base + "/api/auth/mfa", cookie=cookie)
+            mfa_setup_code, mfa_setup, _ = request_json(
+                base + "/api/auth/mfa/setup",
+                "POST",
+                {"password": "Correct-Horse-2026!"},
+                cookie,
+                csrf,
+            )
+            authenticator_code = server_module.mfa_code(mfa_setup.get("secret", "")) if mfa_setup.get("secret") else ""
+            mfa_enable_code, mfa_enabled, _ = request_json(
+                base + "/api/auth/mfa/enable",
+                "POST",
+                {"code": authenticator_code},
+                cookie,
+                csrf,
+            )
+            mfa_status_code, mfa_status, _ = request_json(base + "/api/auth/mfa", cookie=cookie)
+            mfa_challenge_code, mfa_challenge, _ = request_json(
+                base + "/api/auth/login",
+                "POST",
+                {"email": "admin@example.test", "password": "Correct-Horse-2026!"},
+            )
+            mfa_login_code, mfa_login, _ = request_json(
+                base + "/api/auth/login",
+                "POST",
+                {"email": "admin@example.test", "password": "Correct-Horse-2026!", "mfa_code": server_module.mfa_code(mfa_setup.get("secret", ""))},
+            )
+            first_backup = (mfa_enabled.get("backup_codes") or [""])[0]
+            backup_login_code, backup_login, _ = request_json(
+                base + "/api/auth/login",
+                "POST",
+                {"email": "admin@example.test", "password": "Correct-Horse-2026!", "mfa_code": first_backup},
+            )
+            backup_reuse_code, _, _ = request_json(
+                base + "/api/auth/login",
+                "POST",
+                {"email": "admin@example.test", "password": "Correct-Horse-2026!", "mfa_code": first_backup},
+            )
             checks = {
                 "setup_required_reported": status_code == 200 and status_body.get("setup_required") is True,
                 "anonymous_api_blocked": anonymous_code == 401,
@@ -175,6 +213,30 @@ def main() -> int:
                     and certificate.get("local_only") is True
                     and certificate_file.is_file()
                     and certificate_file.read_bytes().startswith(b"%PDF-")
+                ),
+                "mfa_setup_requires_password_and_returns_qr": (
+                    mfa_initial_code == 200
+                    and mfa_initial.get("enabled") is False
+                    and mfa_setup_code == 200
+                    and mfa_setup.get("qr_data_url", "").startswith("data:image/svg+xml;base64,")
+                ),
+                "mfa_enable_returns_one_time_backup_codes": (
+                    mfa_enable_code == 200
+                    and mfa_enabled.get("enabled") is True
+                    and len(mfa_enabled.get("backup_codes", [])) == server_module.MFA_BACKUP_CODE_COUNT
+                    and mfa_status_code == 200
+                    and mfa_status.get("enabled") is True
+                ),
+                "mfa_is_required_at_login": (
+                    mfa_challenge_code == 202
+                    and mfa_challenge.get("mfa_required") is True
+                    and mfa_login_code == 200
+                    and mfa_login.get("authenticated") is True
+                ),
+                "mfa_backup_code_is_single_use": (
+                    backup_login_code == 200
+                    and backup_login.get("authenticated") is True
+                    and backup_reuse_code == 401
                 ),
             }
             for name, passed in checks.items():

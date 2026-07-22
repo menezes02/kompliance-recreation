@@ -11,6 +11,7 @@ import html
 import json
 import mimetypes
 import os
+import re
 import secrets
 import shutil
 import smtplib
@@ -18,13 +19,15 @@ import sqlite3
 import threading
 import textwrap
 import time
+import zipfile
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from io import BytesIO
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 import qrcode
 
@@ -50,6 +53,10 @@ LOGIN_LOCK_MINUTES = 15
 RESET_TOKEN_MINUTES = 30
 RECOVERY_MAX_ATTEMPTS = 3
 RECOVERY_WINDOW_MINUTES = 15
+MFA_PERIOD_SECONDS = 30
+MFA_DIGITS = 6
+MFA_BACKUP_CODE_COUNT = 10
+API_RATE_LIMIT_PER_MINUTE = max(int(os.environ.get("KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE", "120")), 10)
 STARTED_AT = utc_now() if "utc_now" in globals() else datetime.now(UTC).replace(microsecond=0).isoformat()
 SCHEDULER_STOP = threading.Event()
 SCHEDULER_STATE = {
@@ -63,6 +70,9 @@ DEFAULT_SETTINGS = {
     "brand_name": "Kompliance",
     "brand_company": "Kingscroft Developments",
     "brand_tagline": "Health & Safety Operations",
+    "company_email": "",
+    "company_phone": "",
+    "company_address": "",
     "privacy_contact": "",
     "compliance_recipient": "",
     "reminder_days": "30",
@@ -314,6 +324,27 @@ def initialize_database() -> None:
             connection.execute("ALTER TABLE users ADD COLUMN company_id INTEGER NOT NULL DEFAULT 1")
         if "platform_admin" not in user_columns:
             connection.execute("ALTER TABLE users ADD COLUMN platform_admin INTEGER NOT NULL DEFAULT 0")
+        if "mfa_enabled" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0")
+        if "mfa_secret" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN mfa_secret TEXT")
+        if "mfa_pending_secret" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN mfa_pending_secret TEXT")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_mfa_backup_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                code_hash TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mfa_backup_user ON user_mfa_backup_codes(user_id, used_at)"
+        )
         audit_columns = {row["name"] for row in connection.execute("PRAGMA table_info(audit_log)").fetchall()}
         if "company_id" not in audit_columns:
             connection.execute("ALTER TABLE audit_log ADD COLUMN company_id INTEGER NOT NULL DEFAULT 1")
@@ -439,6 +470,13 @@ def initialize_database() -> None:
             )
             """
         )
+        worker_document_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(worker_documents)").fetchall()
+        }
+        if "expiry_source" not in worker_document_columns:
+            connection.execute("ALTER TABLE worker_documents ADD COLUMN expiry_source TEXT")
+        if "expiry_confidence" not in worker_document_columns:
+            connection.execute("ALTER TABLE worker_documents ADD COLUMN expiry_confidence TEXT")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS worker_notifications (
@@ -1025,6 +1063,40 @@ def parse_record_date(value):
         return None
 
 
+def extract_document_expiry(content: bytes, original_name: str, title: str = "") -> tuple[str, str, str]:
+    """Best-effort, auditable expiry extraction; callers must still allow review."""
+    extension = Path(original_name).suffix.lower()
+    text_parts = [Path(original_name).stem, title]
+    try:
+        if extension in {".docx", ".xlsx"}:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                names = [
+                    name for name in archive.namelist()
+                    if name.endswith(".xml") and (name.startswith("word/") or name.startswith("xl/sharedStrings"))
+                ]
+                for name in names[:20]:
+                    xml = archive.read(name).decode("utf-8", "ignore")
+                    text_parts.append(html.unescape(re.sub(r"<[^>]+>", " ", xml)))
+        else:
+            text_parts.append(content.decode("latin-1", "ignore"))
+    except (OSError, zipfile.BadZipFile, KeyError):
+        pass
+    text = re.sub(r"\s+", " ", " ".join(text_parts))[:2_000_000]
+    date_expression = r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})"
+    keyword = r"(?:expiry|expires?|expiration|valid\s+(?:until|to)|renewal\s+(?:date|due)|due\s+date)"
+    contextual = re.compile(rf"{keyword}[^0-9]{{0,48}}{date_expression}", re.IGNORECASE)
+    reverse = re.compile(rf"{date_expression}[^A-Za-z]{{0,24}}{keyword}", re.IGNORECASE)
+    matches = [(match.group(1), "document_text", "high") for match in contextual.finditer(text)]
+    matches.extend((match.group(1), "document_text", "high") for match in reverse.finditer(text))
+    if not matches and re.search(keyword, " ".join(text_parts[:2]), re.IGNORECASE):
+        matches = [(match.group(1), "file_name_or_title", "medium") for match in re.finditer(date_expression, " ".join(text_parts[:2]))]
+    for candidate, source, confidence in matches:
+        parsed = parse_record_date(candidate.replace("-", "/") if re.match(r"\d{1,2}-", candidate) else candidate)
+        if parsed:
+            return parsed.isoformat(), source, confidence
+    return "", "not_detected", "none"
+
+
 def local_record(connection, resource: str, record_id: int, company_id: int = 1):
     row = connection.execute(
         "SELECT * FROM records WHERE resource = ? AND id = ? AND company_id = ?", (resource, record_id, company_id)
@@ -1100,7 +1172,34 @@ def recovery_rate_limit_allowed(limit_key: str) -> bool:
             "UPDATE rate_limits SET attempts = ? WHERE limit_key = ?", (attempts, limit_key)
         )
         connection.commit()
-    return attempts <= RECOVERY_MAX_ATTEMPTS
+        return attempts <= RECOVERY_MAX_ATTEMPTS
+
+
+def company_api_rate_limit(token_id: int) -> tuple[bool, int, int]:
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=1)
+    key = f"company-api:{token_id}"
+    with DB_LOCK, connect_database() as connection:
+        row = connection.execute(
+            "SELECT window_started, attempts FROM rate_limits WHERE limit_key = ?", (key,)
+        ).fetchone()
+        if row is None or row["window_started"] <= cutoff.replace(microsecond=0).isoformat():
+            started = now.replace(microsecond=0).isoformat()
+            attempts = 1
+            connection.execute(
+                "INSERT INTO rate_limits(limit_key, window_started, attempts) VALUES (?, ?, ?) "
+                "ON CONFLICT(limit_key) DO UPDATE SET window_started = excluded.window_started, attempts = excluded.attempts",
+                (key, started, attempts),
+            )
+            retry_after = 60
+        else:
+            started_at = datetime.fromisoformat(row["window_started"])
+            attempts = int(row["attempts"] or 0) + 1
+            connection.execute("UPDATE rate_limits SET attempts = ? WHERE limit_key = ?", (attempts, key))
+            retry_after = max(1, int(60 - (now - started_at).total_seconds()))
+        connection.commit()
+    remaining = max(API_RATE_LIMIT_PER_MINUTE - attempts, 0)
+    return attempts <= API_RATE_LIMIT_PER_MINUTE, remaining, retry_after
 
 
 def write_system_audit(action: str, resource: str, summary: str = "") -> None:
@@ -1367,6 +1466,69 @@ def password_matches(password: str, encoded: str) -> bool:
         return False
 
 
+def generate_mfa_secret() -> str:
+    """Generate a 160-bit RFC 6238-compatible Base32 secret."""
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def mfa_code(secret: str, timestamp: float | None = None) -> str:
+    normalized = str(secret or "").strip().replace(" ", "").upper()
+    padding = "=" * ((8 - len(normalized) % 8) % 8)
+    key = base64.b32decode(normalized + padding, casefold=True)
+    counter = int((timestamp if timestamp is not None else time.time()) // MFA_PERIOD_SECONDS)
+    digest = hmac.new(key, counter.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    number = int.from_bytes(digest[offset : offset + 4], "big") & 0x7FFFFFFF
+    return str(number % (10**MFA_DIGITS)).zfill(MFA_DIGITS)
+
+
+def mfa_code_matches(secret: str, supplied: str, timestamp: float | None = None) -> bool:
+    candidate = "".join(character for character in str(supplied or "") if character.isdigit())
+    if len(candidate) != MFA_DIGITS:
+        return False
+    moment = timestamp if timestamp is not None else time.time()
+    try:
+        return any(
+            hmac.compare_digest(candidate, mfa_code(secret, moment + offset * MFA_PERIOD_SECONDS))
+            for offset in (-1, 0, 1)
+        )
+    except (ValueError, TypeError):
+        return False
+
+
+def mfa_backup_hash(code: str) -> str:
+    normalized = str(code or "").strip().replace("-", "").replace(" ", "").upper()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def generate_mfa_backup_codes() -> list[str]:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return [
+        "".join(secrets.choice(alphabet) for _ in range(5))
+        + "-"
+        + "".join(secrets.choice(alphabet) for _ in range(5))
+        for _ in range(MFA_BACKUP_CODE_COUNT)
+    ]
+
+
+def verify_user_mfa(connection, user_row, supplied: str, consume_backup: bool = True) -> bool:
+    if mfa_code_matches(user_row["mfa_secret"], supplied):
+        return True
+    digest = mfa_backup_hash(supplied)
+    row = connection.execute(
+        "SELECT id FROM user_mfa_backup_codes WHERE user_id = ? AND code_hash = ? AND used_at IS NULL",
+        (user_row["id"], digest),
+    ).fetchone()
+    if row is None:
+        return False
+    if consume_backup:
+        connection.execute(
+            "UPDATE user_mfa_backup_codes SET used_at = ? WHERE id = ? AND used_at IS NULL",
+            (utc_now(), row["id"]),
+        )
+    return True
+
+
 def pdf_escape(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
@@ -1578,7 +1740,7 @@ def shared_worker_projection(connection, access_row) -> dict:
         for row in document_rows:
             document = {
                 key: row[key]
-                for key in ("id", "category", "title", "original_name", "mime_type", "size", "version", "expiry_date", "created_at", "updated_at")
+                for key in ("id", "category", "title", "original_name", "mime_type", "size", "version", "expiry_date", "expiry_source", "expiry_confidence", "created_at", "updated_at")
             }
             document["review_status"] = row["company_review_status"]
             projected["documents"].append(document)
@@ -1791,7 +1953,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             row = connection.execute(
                 """
                 SELECT users.id, users.email, users.name, users.role, users.company_id,
-                       users.platform_admin, companies.name AS company_name,
+                       users.platform_admin, users.mfa_enabled, companies.name AS company_name,
                        sessions.csrf_token, sessions.expires_at
                 FROM sessions JOIN users ON users.id = sessions.user_id
                 JOIN companies ON companies.id = users.company_id
@@ -2002,6 +2164,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                         "company_id": 1,
                         "company_name": DEFAULT_SETTINGS["brand_company"],
                         "platform_admin": 1,
+                        "mfa_enabled": 0,
                     },
                     "csrf_token": "",
                 }
@@ -2015,7 +2178,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "enabled": True,
                 "setup_required": setup_required,
                 "authenticated": user is not None,
-                "user": ({key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin")} if user else None),
+                "user": ({key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin", "mfa_enabled")} if user else None),
                 "csrf_token": user.get("csrf_token", "") if user else "",
             }
         )
@@ -2053,10 +2216,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             connection.commit()
             user_id = cursor.lastrowid
         csrf_token, cookie = self.create_session(user_id)
-        user = {"id": user_id, "email": email, "name": name, "role": "admin", "company_id": 1, "company_name": DEFAULT_SETTINGS["brand_company"], "platform_admin": 1}
+        user = {"id": user_id, "email": email, "name": name, "role": "admin", "company_id": 1, "company_name": DEFAULT_SETTINGS["brand_company"], "platform_admin": 1, "mfa_enabled": 0}
         self.write_audit(user, "setup", "auth", summary="Initial administrator created")
         self.send_json(
-            {"authenticated": True, "user": {key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin")}, "csrf_token": csrf_token},
+            {"authenticated": True, "user": {key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin", "mfa_enabled")}, "csrf_token": csrf_token},
             HTTPStatus.CREATED,
             {"Set-Cookie": cookie},
         )
@@ -2069,6 +2232,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         email = str(payload.get("email", "")).strip().lower()
         password = str(payload.get("password", ""))
+        supplied_mfa = str(payload.get("mfa_code", "")).strip()
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
             row = connection.execute(
@@ -2076,24 +2240,32 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 (email,),
             ).fetchone()
             locked = bool(row and row["locked_until"] and row["locked_until"] > now)
-            valid = bool(
+            password_valid = bool(
                 row
                 and row["active"]
                 and not locked
                 and password_matches(password, row["password_hash"])
             )
+            mfa_required = bool(password_valid and row["mfa_enabled"])
+            mfa_missing = bool(mfa_required and not supplied_mfa)
+            mfa_valid = bool(
+                not mfa_required
+                or (supplied_mfa and verify_user_mfa(connection, row, supplied_mfa))
+            )
+            valid = bool(password_valid and mfa_valid)
             if row and not valid and row["active"] and not locked:
-                failures = int(row["failed_attempts"] or 0) + 1
-                locked_until = None
-                if failures >= LOGIN_MAX_ATTEMPTS:
-                    locked_until = (
-                        datetime.now(UTC) + timedelta(minutes=LOGIN_LOCK_MINUTES)
-                    ).replace(microsecond=0).isoformat()
-                connection.execute(
-                    "UPDATE users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?",
-                    (failures, locked_until, now, row["id"]),
-                )
-                connection.commit()
+                if not mfa_missing:
+                    failures = int(row["failed_attempts"] or 0) + 1
+                    locked_until = None
+                    if failures >= LOGIN_MAX_ATTEMPTS:
+                        locked_until = (
+                            datetime.now(UTC) + timedelta(minutes=LOGIN_LOCK_MINUTES)
+                        ).replace(microsecond=0).isoformat()
+                    connection.execute(
+                        "UPDATE users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?",
+                        (failures, locked_until, now, row["id"]),
+                    )
+                    connection.commit()
             elif valid:
                 connection.execute(
                     "UPDATE users SET failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
@@ -2107,15 +2279,23 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 HTTPStatus.TOO_MANY_REQUESTS,
             )
             return
+        if mfa_missing:
+            self.write_audit(dict(row), "login_mfa_challenge", "auth", summary="Password accepted; authenticator code required")
+            self.send_json(
+                {"authenticated": False, "mfa_required": True, "message": "Enter the code from your authenticator app or a backup code."},
+                HTTPStatus.ACCEPTED,
+            )
+            return
         if not valid:
-            self.write_audit(None, "login_failed", "auth", summary=f"Failed login for {email[:180]}")
-            self.send_json({"error": "Invalid email or password."}, HTTPStatus.UNAUTHORIZED)
+            action = "login_mfa_failed" if password_valid and mfa_required else "login_failed"
+            self.write_audit(dict(row) if row else None, action, "auth", summary=f"Failed login for {email[:180]}")
+            self.send_json({"error": "Invalid email, password, or authentication code."}, HTTPStatus.UNAUTHORIZED)
             return
         csrf_token, cookie = self.create_session(row["id"])
         user = dict(row)
-        self.write_audit(user, "login", "auth", summary="Successful login")
+        self.write_audit(user, "login", "auth", summary="Successful login with MFA" if mfa_required else "Successful login")
         self.send_json(
-            {"authenticated": True, "user": {key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin")}, "csrf_token": csrf_token},
+            {"authenticated": True, "user": {key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin", "mfa_enabled")}, "csrf_token": csrf_token},
             headers={"Set-Cookie": cookie},
         )
 
@@ -2163,6 +2343,133 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         csrf_token, cookie = self.create_session(user["id"])
         self.write_audit(user, "password_changed", "auth", summary="Password changed")
         self.send_json({"updated": True, "csrf_token": csrf_token}, headers={"Set-Cookie": cookie})
+
+    def handle_auth_mfa_status(self) -> None:
+        user = self.require_user()
+        if user is None:
+            return
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT mfa_enabled FROM users WHERE id = ?", (user["id"],)
+            ).fetchone()
+            remaining = connection.execute(
+                "SELECT COUNT(*) FROM user_mfa_backup_codes WHERE user_id = ? AND used_at IS NULL",
+                (user["id"],),
+            ).fetchone()[0]
+        self.send_json({"enabled": bool(row and row["mfa_enabled"]), "backup_codes_remaining": remaining})
+
+    def handle_auth_mfa_setup(self) -> None:
+        user = self.require_user()
+        if user is None or not self.require_csrf(user):
+            return
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        current_password = str(payload.get("password", ""))
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT password_hash, mfa_enabled FROM users WHERE id = ?", (user["id"],)
+            ).fetchone()
+            if row is None or not password_matches(current_password, row["password_hash"]):
+                self.send_json({"error": "Current password is incorrect."}, HTTPStatus.FORBIDDEN)
+                return
+            if row["mfa_enabled"]:
+                self.send_json({"error": "Multi-factor authentication is already enabled."}, HTTPStatus.CONFLICT)
+                return
+            secret = generate_mfa_secret()
+            connection.execute(
+                "UPDATE users SET mfa_pending_secret = ?, updated_at = ? WHERE id = ?",
+                (secret, utc_now(), user["id"]),
+            )
+            connection.commit()
+        issuer = application_settings(int(user.get("company_id", 1))).get("brand_name", "Kompliance")
+        label = f"{issuer}:{user['email']}"
+        query = urlencode({"secret": secret, "issuer": issuer, "algorithm": "SHA1", "digits": MFA_DIGITS, "period": MFA_PERIOD_SECONDS})
+        provisioning_uri = f"otpauth://totp/{quote(label)}?{query}"
+        qr_svg = build_qr_svg(provisioning_uri, "Authenticator setup QR code")
+        self.write_audit(user, "mfa_setup_started", "auth", summary="Authenticator enrolment started")
+        self.send_json({
+            "secret": secret,
+            "provisioning_uri": provisioning_uri,
+            "qr_data_url": "data:image/svg+xml;base64," + base64.b64encode(qr_svg).decode("ascii"),
+        })
+
+    def handle_auth_mfa_enable(self) -> None:
+        user = self.require_user()
+        if user is None or not self.require_csrf(user):
+            return
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        code = str(payload.get("code", ""))
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT mfa_pending_secret, mfa_enabled FROM users WHERE id = ?", (user["id"],)
+            ).fetchone()
+            if row is None or row["mfa_enabled"]:
+                self.send_json({"error": "Multi-factor authentication is already enabled."}, HTTPStatus.CONFLICT)
+                return
+            secret = row["mfa_pending_secret"] or ""
+            if not secret or not mfa_code_matches(secret, code):
+                self.send_json({"error": "The authenticator code is invalid or expired."}, HTTPStatus.BAD_REQUEST)
+                return
+            backup_codes = generate_mfa_backup_codes()
+            now = utc_now()
+            connection.execute(
+                "UPDATE users SET mfa_enabled = 1, mfa_secret = ?, mfa_pending_secret = NULL, updated_at = ? WHERE id = ?",
+                (secret, now, user["id"]),
+            )
+            connection.execute("DELETE FROM user_mfa_backup_codes WHERE user_id = ?", (user["id"],))
+            connection.executemany(
+                "INSERT INTO user_mfa_backup_codes(user_id, code_hash, used_at, created_at) VALUES (?, ?, NULL, ?)",
+                [(user["id"], mfa_backup_hash(item), now) for item in backup_codes],
+            )
+            current_digest = hashlib.sha256(self.session_token().encode("utf-8")).hexdigest()
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", (user["id"], current_digest)
+            )
+            connection.commit()
+        self.write_audit(user, "mfa_enabled", "auth", summary="Authenticator MFA enabled; other sessions revoked")
+        self.send_json({"enabled": True, "backup_codes": backup_codes, "backup_codes_remaining": len(backup_codes)})
+
+    def handle_auth_mfa_disable(self) -> None:
+        user = self.require_user()
+        if user is None or not self.require_csrf(user):
+            return
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        password = str(payload.get("password", ""))
+        code = str(payload.get("code", ""))
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+            if row is None or not row["mfa_enabled"]:
+                self.send_json({"error": "Multi-factor authentication is not enabled."}, HTTPStatus.CONFLICT)
+                return
+            if not password_matches(password, row["password_hash"]):
+                self.send_json({"error": "Current password is incorrect."}, HTTPStatus.FORBIDDEN)
+                return
+            if not verify_user_mfa(connection, row, code):
+                self.send_json({"error": "The authentication code is invalid or expired."}, HTTPStatus.BAD_REQUEST)
+                return
+            connection.execute(
+                "UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_pending_secret = NULL, updated_at = ? WHERE id = ?",
+                (utc_now(), user["id"]),
+            )
+            connection.execute("DELETE FROM user_mfa_backup_codes WHERE user_id = ?", (user["id"],))
+            current_digest = hashlib.sha256(self.session_token().encode("utf-8")).hexdigest()
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", (user["id"], current_digest)
+            )
+            connection.commit()
+        self.write_audit(user, "mfa_disabled", "auth", summary="Authenticator MFA disabled; other sessions revoked")
+        self.send_json({"enabled": False, "backup_codes_remaining": 0})
 
     def handle_auth_recovery_request(self) -> None:
         try:
@@ -2414,6 +2721,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
+        if expiry_date:
+            expiry_source = "manual"
+            expiry_confidence = "confirmed"
+        else:
+            expiry_date, expiry_source, expiry_confidence = extract_document_expiry(content, original_name, title)
         folder = DATA_ROOT / "worker-documents" / str(worker["id"])
         folder.mkdir(parents=True, exist_ok=True)
         stored_name = f"{worker['id']}-{secrets.token_hex(12)}{extension}"
@@ -2423,11 +2735,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         with DB_LOCK, connect_database() as connection:
             version = 1 + connection.execute("SELECT COUNT(*) FROM worker_documents WHERE worker_id = ? AND category = ? AND title = ? COLLATE NOCASE", (worker["id"], category, title)).fetchone()[0]
             cursor = connection.execute(
-                "INSERT INTO worker_documents(worker_id, category, title, original_name, stored_name, mime_type, size, version, expiry_date, review_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)",
-                (worker["id"], category, title, original_name, stored_name, mime_type, len(content), version, expiry_date or None, now, now),
+                "INSERT INTO worker_documents(worker_id, category, title, original_name, stored_name, mime_type, size, version, expiry_date, expiry_source, expiry_confidence, review_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)",
+                (worker["id"], category, title, original_name, stored_name, mime_type, len(content), version, expiry_date or None, expiry_source, expiry_confidence, now, now),
             )
             connection.commit()
-        self.send_json({"id": cursor.lastrowid, "category": category, "title": title, "original_name": original_name, "stored_name": stored_name, "size": len(content), "version": version, "expiry_date": expiry_date, "review_status": "unread"}, HTTPStatus.CREATED)
+        self.send_json({"id": cursor.lastrowid, "category": category, "title": title, "original_name": original_name, "stored_name": stored_name, "size": len(content), "version": version, "expiry_date": expiry_date or None, "expiry_source": expiry_source, "expiry_confidence": expiry_confidence, "review_status": "unread"}, HTTPStatus.CREATED)
 
     def handle_worker_document_delete(self, worker, document_id: int) -> None:
         with DB_LOCK, connect_database() as connection:
@@ -2997,7 +3309,22 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if token is None:
             self.send_json({"error": "Valid bearer token required."}, HTTPStatus.UNAUTHORIZED)
             return None
+        allowed, remaining, retry_after = company_api_rate_limit(int(token["id"]))
+        self.api_rate_headers = {
+            "X-RateLimit-Limit": str(API_RATE_LIMIT_PER_MINUTE),
+            "X-RateLimit-Remaining": str(remaining),
+        }
+        if not allowed:
+            self.send_json(
+                {"error": "API rate limit exceeded. Retry after the indicated delay."},
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {**self.api_rate_headers, "Retry-After": str(retry_after)},
+            )
+            return None
         return dict(token)
+
+    def send_company_api_json(self, payload, status=HTTPStatus.OK) -> None:
+        self.send_json(payload, status, getattr(self, "api_rate_headers", {}))
 
     def record_company_api_use(self, token, resource: str, record_id=None) -> None:
         now = utc_now()
@@ -3009,21 +3336,42 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             )
             connection.commit()
 
-    def handle_api_shared_workers(self) -> None:
+    def handle_api_shared_workers(self, query: str = "") -> None:
         token = self.authenticate_company_api()
         if token is None:
             return
+        parameters = parse_qs(query)
+        try:
+            page = max(int(parameters.get("page", ["1"])[0]), 1)
+            page_size = min(max(int(parameters.get("page_size", ["50"])[0]), 1), 100)
+        except ValueError:
+            self.send_company_api_json({"error": "page and page_size must be integers."}, HTTPStatus.BAD_REQUEST)
+            return
+        offset = (page - 1) * page_size
         with DB_LOCK, connect_database() as connection:
+            total = connection.execute(
+                "SELECT COUNT(*) FROM worker_company_access WHERE company_id = ? AND status = 'active'",
+                (token["company_id"],),
+            ).fetchone()[0]
             rows = connection.execute(
                 """SELECT worker_company_access.*, worker_accounts.email, worker_profiles.payload AS profile_payload
                    FROM worker_company_access JOIN worker_accounts ON worker_accounts.id = worker_company_access.worker_id
                    JOIN worker_profiles ON worker_profiles.worker_id = worker_company_access.worker_id
-                   WHERE worker_company_access.company_id = ? AND worker_company_access.status = 'active'""",
-                (token["company_id"],),
+                   WHERE worker_company_access.company_id = ? AND worker_company_access.status = 'active'
+                   ORDER BY worker_company_access.id ASC LIMIT ? OFFSET ?""",
+                (token["company_id"], page_size, offset),
             ).fetchall()
             data = [shared_worker_projection(connection, row) for row in rows]
         self.record_company_api_use(token, "shared_workers")
-        self.send_json({"data": data})
+        self.send_company_api_json({
+            "data": data,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "pages": (total + page_size - 1) // page_size,
+            },
+        })
 
     def handle_api_worker_resource(self, path: str) -> None:
         token = self.authenticate_company_api()
@@ -3094,7 +3442,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if payload is None:
             self.send_worker_file(document["worker_id"], document["stored_name"], document["original_name"], document["mime_type"])
         else:
-            self.send_json(payload)
+            self.send_company_api_json(payload)
 
     def workflow_request_payload(self, connection, row) -> dict:
         item = dict(row)
@@ -3495,7 +3843,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             rows = connection.execute(
                 """
                 SELECT users.id, users.email, users.name, users.role, users.active,
-                       users.failed_attempts, users.locked_until, users.created_at, users.updated_at,
+                       users.failed_attempts, users.locked_until, users.mfa_enabled, users.created_at, users.updated_at,
                        COUNT(sessions.token_hash) AS session_count
                 FROM users LEFT JOIN sessions ON sessions.user_id = users.id
                 WHERE users.company_id = ?
@@ -3630,7 +3978,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     self.send_json({"error": f"{numeric_key} must be a number."}, HTTPStatus.BAD_REQUEST)
                     return
-        for email_key in ("privacy_contact", "compliance_recipient"):
+        for email_key in ("privacy_contact", "compliance_recipient", "company_email"):
             if updates.get(email_key) and "@" not in updates[email_key]:
                 self.send_json({"error": f"{email_key} must be a valid email address."}, HTTPStatus.BAD_REQUEST)
                 return
@@ -3640,6 +3988,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                     "INSERT INTO company_settings(company_id, key, value) VALUES (?, ?, ?) "
                     "ON CONFLICT(company_id, key) DO UPDATE SET value = excluded.value",
                     (user["company_id"], key, value),
+                )
+            if updates.get("brand_company"):
+                connection.execute(
+                    "UPDATE companies SET name = ?, updated_at = ? WHERE id = ?",
+                    (updates["brand_company"], utc_now(), user["company_id"]),
                 )
             connection.commit()
         self.write_audit(user, "settings_updated", "settings", summary=f"Updated: {', '.join(sorted(updates))}")
@@ -3669,6 +4022,25 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             elif record.get("local_only"):
                 local += 1
         disk = shutil.disk_usage(DATA_ROOT)
+        operations = {
+            "available": False,
+            "ready": False,
+            "backups_enabled": False,
+            "last_check_at": "",
+            "last_check_error": "",
+            "last_backup_at": "",
+            "last_backup": None,
+            "last_backup_error": "",
+        }
+        try:
+            saved_operations = json.loads(
+                (DATA_ROOT / "operations" / "status.json").read_text(encoding="utf-8")
+            )
+            if isinstance(saved_operations, dict):
+                operations.update(saved_operations)
+                operations["available"] = True
+        except (OSError, json.JSONDecodeError):
+            pass
         self.send_json(
             {
                 "ok": integrity == "ok",
@@ -3681,6 +4053,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "disk": {"free_bytes": disk.free, "total_bytes": disk.total},
                 "email": public_email_configuration(),
                 "scheduler": dict(SCHEDULER_STATE),
+                "operations": operations,
                 "retention_preview": retention_cleanup(dry_run=True, company_id=company_id),
             }
         )
@@ -4159,6 +4532,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path == "/api/auth/status":
             self.handle_auth_status()
             return
+        if path == "/api/auth/mfa":
+            self.handle_auth_mfa_status()
+            return
         if path == "/api/public/companies":
             self.handle_public_companies()
             return
@@ -4172,7 +4548,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.handle_worker_verify(parsed.query)
             return
         if path == "/api/v1/shared-workers":
-            self.handle_api_shared_workers()
+            self.handle_api_shared_workers(parsed.query)
             return
         if path.startswith("/api/v1/workers/"):
             self.handle_api_worker_resource(path)
@@ -4349,6 +4725,15 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/password":
             self.handle_auth_password()
+            return
+        if parsed.path == "/api/auth/mfa/setup":
+            self.handle_auth_mfa_setup()
+            return
+        if parsed.path == "/api/auth/mfa/enable":
+            self.handle_auth_mfa_enable()
+            return
+        if parsed.path == "/api/auth/mfa/disable":
+            self.handle_auth_mfa_disable()
             return
         if parsed.path == "/api/auth/recovery/request":
             self.handle_auth_recovery_request()

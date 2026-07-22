@@ -14,8 +14,8 @@ The current product is a secured operations clone using one authorised customer 
 
 | Module | Estimate | Implemented | Principal gaps |
 |---|---:|---|---|
-| 1. Universal Worker Profile | 90% | Free self-registration, email verification/recovery, editable complete profile, worker QR/public profile, camera/manual QR access request, worker field-level approval/decline, consent/revocation, tenant relationships/import, revocable audited REST API, OpenAPI 3.1 contract, expanded English/Portuguese/Spanish catalogue | Approved SMS/mobile OTP provider, client SDK, API pagination/rate limits, full native-speaker translation review |
-| 2. Document Management | 78% | Imported libraries, PDF/image viewing/download, worker-owned categories, drag/drop multi-upload/progress, validation, preview/delete, automatic versions, expiry colours/reminders, tenant document review | Automatic expiry extraction from document content, company plant/equipment/site ownership refinements, visual version-history grouping |
+| 1. Universal Worker Profile | 94% | Free self-registration, email verification/recovery, account TOTP MFA and single-use backup codes, editable complete profile, worker QR/public profile, camera/manual QR access request, worker field-level approval/decline, consent/revocation, tenant relationships/import, revocable audited REST API, OpenAPI 3.1 contract, API pagination/per-token throttling, expanded English/Portuguese/Spanish catalogue | Approved SMS/mobile OTP provider, client SDK, full native-speaker translation review |
+| 2. Document Management | 84% | Imported libraries, PDF/image viewing/download, worker-owned categories, drag/drop multi-upload/progress, validation, preview/delete, automatic versions, auditable best-effort expiry extraction, expiry colours/reminders, tenant document review | OCR/provider extraction for scanned images, company plant/equipment/site ownership refinements, visual version-history grouping |
 | 3. Compliance & Workflow | 82% | Forms/drafts/signatures/evidence/reports, certificate verification/revocation, expiry centre, email queue/retries, audit/roles, per-company worker-document reviews, routed requests, internal worker/company conversations, induction decisions/comments/history, in-app notifications and channel/language preferences | Approved SMS/push providers, provider delivery receipts/escalations, richer supervisor queues and formal customer acceptance |
 | 4. Responsive UI | 95% | Responsive navigation, dashboards, tables, forms, document viewers, QR camera/manual fallback, desktop/mobile workflow checks, persistent English/Portuguese/Spanish localisation for the shell, worker portal and primary workflows | Native-speaker review and the remaining rare/error-state strings; exhaustive tablet/device accessibility and touch acceptance |
 | 5. Demo Environment | 5% | Data boundaries and governance documentation | Separate fictional dataset, redacted/sample files, watermarking, automated PII scan and public-demo approval |
@@ -44,6 +44,11 @@ The current product is a secured operations clone using one authorised customer 
 - System/privacy screen with database integrity, storage, readiness, branding, contacts and local-only retention.
 - Consistent SQLite backup, file hashes, verification and empty-directory restore rehearsal.
 - Desktop and 390 px browser acceptance with no console warnings or errors.
+- TOTP multi-factor authentication with one-time backup codes and audit events.
+- Paginated, per-token rate-limited integration API.
+- Best-effort document expiry extraction with source/confidence metadata.
+- Unattended readiness monitoring and checksum-verified daily writable-data backups.
+- Persistent tenant company profile and contact settings.
 
 ## Recommended delivery sequence
 

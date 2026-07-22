@@ -71,6 +71,7 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
                 "KOMPLIANCE_APP_AUTH": "1",
                 "KOMPLIANCE_WORKER_EMAIL_VERIFICATION": "0",
                 "KOMPLIANCE_EMAIL_DELIVERY": "0",
+                "KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE": "10",
             }
         )
         cls.process = subprocess.Popen(
@@ -133,11 +134,12 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
         status, document, _ = worker.json(
             "/api/worker/documents",
             "POST",
-            b"controlled worker document",
+            b"controlled worker document\nExpiry date: 31/12/2030\n",
             worker_csrf,
             {"Content-Type": "application/pdf", "X-Document-Category": "Certification", "X-Document-Title": "Electrical Certificate", "X-File-Name": "certificate.pdf"},
         )
         self.assertEqual(status, 201)
+        self.assertEqual((document["expiry_date"], document["expiry_source"], document["expiry_confidence"]), ("2030-12-31", "document_text", "high"))
         tenant_client = Client(self.base_url)
         status, login, _ = tenant_client.json(
             "/api/auth/login", "POST", {"email": "tenant@test.local", "password": "TenantPass2026!"}
@@ -178,7 +180,7 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
         self.assertEqual(shared["data"][0]["profile"]["email"], "aoife@test.local")
         self.assertNotIn("phone", shared["data"][0]["profile"])
         status, _, content = tenant_client.call(f"/api/company/worker-documents/{document['id']}/file")
-        self.assertEqual((status, content), (200, b"controlled worker document"))
+        self.assertEqual((status, content), (200, b"controlled worker document\nExpiry date: 31/12/2030\n"))
         status, review, _ = tenant_client.json(
             f"/api/company/worker-documents/{document['id']}/review", "POST", {"status": "approved"}, tenant_csrf
         )
@@ -199,14 +201,21 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
         self.assertEqual(status, 201)
         api = Client(self.base_url)
         auth_header = {"Authorization": "Bearer " + token["token"]}
-        status, api_workers, _ = api.json("/api/v1/shared-workers", headers=auth_header)
+        status, api_workers, api_headers = api.json("/api/v1/shared-workers?page=1&page_size=1", headers=auth_header)
         self.assertEqual((status, len(api_workers["data"])), (200, 1))
+        self.assertEqual(api_workers["pagination"], {"page": 1, "page_size": 1, "total": 1, "pages": 1})
+        self.assertEqual(api_headers.get("X-RateLimit-Limit"), "10")
         worker_id = shared["data"][0]["worker_id"]
         self.assertEqual(api.json(f"/api/v1/workers/{worker_id}", headers=auth_header)[0], 200)
         self.assertEqual(api.json(f"/api/v1/workers/{worker_id}/certifications", headers=auth_header)[1]["data"], ["Electrical Level 6"])
         self.assertEqual(api.json(f"/api/v1/workers/{worker_id}/training-records", headers=auth_header)[1]["data"], ["Working at Height"])
         self.assertEqual(api.json(f"/api/v1/workers/{worker_id}/inductions", headers=auth_header)[1]["data"], ["Tenant Two Site"])
-        self.assertEqual(api.call(f"/api/v1/workers/{worker_id}/documents/{document['id']}/file", headers=auth_header)[2], b"controlled worker document")
+        self.assertEqual(api.call(f"/api/v1/workers/{worker_id}/documents/{document['id']}/file", headers=auth_header)[2], b"controlled worker document\nExpiry date: 31/12/2030\n")
+        for _ in range(4):
+            self.assertEqual(api.call("/api/v1/shared-workers?page_size=1", headers=auth_header)[0], 200)
+        limited_status, limited_headers, _ = api.call("/api/v1/shared-workers", headers=auth_header)
+        self.assertEqual(limited_status, 429)
+        self.assertGreaterEqual(int(limited_headers.get("Retry-After", "0")), 1)
         self.assertEqual(
             tenant_client.json(f"/api/company/api-tokens/{token['id']}/revoke", "POST", {}, tenant_csrf)[0],
             200,

@@ -5487,6 +5487,42 @@ body.auth-screen .app-shell {
 .system-detail-list dd { margin: 0; font-weight: 700; text-align: right; }
 .retention-preview { display: grid; gap: .45rem; margin: 1.25rem 0; padding: 1rem; border-radius: 12px; background: #f5f8fa; }
 .retention-preview span, .delivery-error { display: block; color: var(--muted); font-size: .8rem; }
+
+.mfa-enrolment-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 1.5rem;
+  align-items: center;
+  margin: 1.25rem 0;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #f7faf9;
+}
+
+.mfa-enrolment-grid img {
+  width: 100%;
+  max-width: 240px;
+  padding: .75rem;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.mfa-enrolment-grid code,
+.mfa-backup-codes {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  padding: 1rem;
+  border-radius: 10px;
+  background: #102d3e;
+  color: #f4fbf8;
+  letter-spacing: .08em;
+}
+
+@media (max-width: 700px) {
+  .mfa-enrolment-grid { grid-template-columns: 1fr; }
+}
 .delivery-error { max-width: 300px; margin-top: .3rem; color: #a33b43; }
 
 @media (max-width: 1180px) {

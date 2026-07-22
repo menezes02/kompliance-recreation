@@ -3109,35 +3109,49 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
-function renderProfile() {
+async function renderProfile() {
   const user = state.auth.user || {};
+  const result = await api("/api/settings");
+  const settings = result.settings || {};
+  const editable = user.role === "admin";
   app.innerHTML = `
-    ${pageHeader("My Profile")}
+    ${pageHeader("Company profile", "Contact, branding and governance details for this tenant")}
     <section class="card form-card">
       <form id="profile-form">
         <div class="form-grid">
           ${[
-            { name: "company_name", label: "Company Name", required: true, value: "Local Company" },
-            { name: "email", label: "Email", type: "email", required: true, value: user.email || "local@kompliance.test" },
-            { name: "admin_name", label: "Company Admin Name", required: true, value: user.name || "Local Administrator" },
-            { name: "admin_email", label: "Company Admin Email", type: "email", value: user.email || "local@kompliance.test" },
-            { name: "phone", label: "Phone Number", value: "+353" },
-            { name: "address", label: "Address", full: true, value: "Local development address" },
+            { name: "brand_company", label: "Company name", required: true, value: settings.brand_company || user.company_name || "" },
+            { name: "brand_name", label: "Platform name", required: true, value: settings.brand_name || "Kompliance" },
+            { name: "brand_tagline", label: "Tagline", required: true, value: settings.brand_tagline || "" },
+            { name: "company_email", label: "Company email", type: "email", value: settings.company_email || "" },
+            { name: "company_phone", label: "Company phone", value: settings.company_phone || "" },
+            { name: "privacy_contact", label: "Privacy contact", type: "email", value: settings.privacy_contact || "" },
+            { name: "compliance_recipient", label: "Compliance recipient", type: "email", value: settings.compliance_recipient || "" },
+            { name: "company_address", label: "Company address", full: true, value: settings.company_address || "" },
           ]
             .map((field) => fieldMarkup(field, field))
             .join("")}
         </div>
-        <div class="form-actions"><button class="button button-primary">Update</button></div>
+        <div class="form-actions"><button class="button button-primary" ${editable ? "" : "disabled"}>Save company profile</button></div>
       </form>
     </section>
   `;
-  document.querySelector("#profile-form").addEventListener("submit", (event) => {
+  document.querySelectorAll("#profile-form input, #profile-form textarea").forEach(control => { control.disabled = !editable; });
+  document.querySelector("#profile-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    showToast("Profile saved locally.");
+    if (!editable) return;
+    try {
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      await api("/api/settings", { method: "PUT", body: JSON.stringify(values) });
+      state.auth.user.company_name = values.brand_company;
+      applyAuthContext();
+      showToast("Company profile saved and audited.");
+    } catch (error) { showToast(error.message, "error"); }
   });
 }
 
-function renderChangePassword() {
+async function renderChangePassword() {
+  const mfa = state.auth.enabled ? await api("/api/auth/mfa") : { enabled: false, backup_codes_remaining: 0 };
   app.innerHTML = `
     ${pageHeader("Change password")}
     <section class="card form-card">
@@ -3153,6 +3167,25 @@ function renderChangePassword() {
         </div>
         <div class="form-actions"><button class="button button-primary">Update password</button></div>
       </form>
+    </section>
+    <section class="card form-card compact-form-card">
+      <div class="local-section-heading"><span>Account security</span><h2>Multi-factor authentication</h2><p>Use a time-based authenticator app. Backup codes are displayed once and each can be used only once.</p></div>
+      ${mfa.enabled ? `
+        <div class="security-role-grid"><article><span>Authenticator</span><strong>Enabled</strong><small>${Number(mfa.backup_codes_remaining || 0)} unused backup codes</small></article></div>
+        <form id="mfa-disable-form"><div class="form-grid">
+          ${fieldMarkup({ name: "password", label: "Current password", type: "password", required: true })}
+          ${fieldMarkup({ name: "code", label: "Authenticator or backup code", required: true })}
+        </div><div class="form-actions"><button class="button button-danger">Disable MFA</button></div></form>
+      ` : `
+        <div class="security-role-grid"><article><span>Authenticator</span><strong>Not enabled</strong><small>Add a second sign-in factor before inviting more administrators.</small></article></div>
+        <form id="mfa-start-form"><div class="form-grid">
+          ${fieldMarkup({ name: "password", label: "Current password", type: "password", required: true })}
+        </div><div class="form-actions"><button class="button button-primary">Set up authenticator</button></div></form>
+        <div id="mfa-enrolment" class="hidden">
+          <div class="mfa-enrolment-grid"><img id="mfa-qr" alt="Authenticator setup QR code" /><div><strong>Scan this QR code</strong><p>Use Microsoft Authenticator, Google Authenticator, 1Password or another TOTP-compatible application.</p><code id="mfa-secret"></code></div></div>
+          <form id="mfa-enable-form"><div class="form-grid">${fieldMarkup({ name: "code", label: "Six-digit authenticator code", required: true })}</div><div class="form-actions"><button class="button button-primary">Confirm and enable MFA</button></div></form>
+        </div>
+      `}
     </section>
   `;
   document.querySelector("#password-form").addEventListener("submit", async (event) => {
@@ -3178,6 +3211,42 @@ function renderChangePassword() {
     } catch (error) {
       showToast(error.message, "error");
     }
+  });
+  document.querySelector("#mfa-start-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const result = await api("/api/auth/mfa/setup", { method: "POST", body: JSON.stringify({ password: form.get("password") }) });
+      document.querySelector("#mfa-qr").src = result.qr_data_url;
+      document.querySelector("#mfa-secret").textContent = result.secret;
+      document.querySelector("#mfa-enrolment").classList.remove("hidden");
+      event.currentTarget.classList.add("hidden");
+      showToast("Scan the QR code and enter the current six-digit code.");
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#mfa-enable-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const result = await api("/api/auth/mfa/enable", { method: "POST", body: JSON.stringify({ code: form.get("code") }) });
+      state.auth.user.mfa_enabled = 1;
+      const codes = result.backup_codes || [];
+      modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="backup-title"><div class="modal-header"><div><span>Save now</span><h2 id="backup-title">MFA backup codes</h2></div></div><p>Store these codes in your password manager. They will not be shown again.</p><pre class="mfa-backup-codes">${codes.map(escapeHtml).join("\n")}</pre><div class="form-actions"><button class="button button-secondary" id="copy-backup-codes">Copy codes</button><button class="button button-primary" id="close-backup-codes">I saved them</button></div></section></div>`;
+      document.body.classList.add("modal-open");
+      document.querySelector("#copy-backup-codes").addEventListener("click", async () => { await navigator.clipboard.writeText(codes.join("\n")); showToast("Backup codes copied."); });
+      document.querySelector("#close-backup-codes").addEventListener("click", async () => { modalRoot.innerHTML = ""; document.body.classList.remove("modal-open"); await renderChangePassword(); });
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#mfa-disable-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!window.confirm("Disable multi-factor authentication for this account? Other sessions will be revoked.")) return;
+    const form = new FormData(event.currentTarget);
+    try {
+      await api("/api/auth/mfa/disable", { method: "POST", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      state.auth.user.mfa_enabled = 0;
+      showToast("Multi-factor authentication disabled.");
+      await renderChangePassword();
+    } catch (error) { showToast(error.message, "error"); }
   });
 }
 
@@ -3209,7 +3278,7 @@ async function renderUserManagement() {
       <article><span>Administrator</span><strong>Security ownership</strong><small>Can manage users, delete local records and review audit events.</small></article>
     </div>
     <section class="card table-card">
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>State</th><th>Sessions</th><th>Security</th><th>Actions</th></tr></thead><tbody>${users.map((user, index) => `<tr><td>${index + 1}</td><td><input class="user-inline-name" data-user-name="${user.id}" value="${escapeHtml(user.name)}" /></td><td>${escapeHtml(user.email)}</td><td><select data-user-role="${user.id}">${["viewer", "editor", "admin"].map((role) => `<option ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}</select></td><td><label class="toggle-label"><input type="checkbox" data-user-active="${user.id}" ${user.active ? "checked" : ""} /> Active</label></td><td>${Number(user.session_count || 0)}</td><td>${user.locked_until ? `Locked until ${escapeHtml(displayDate(user.locked_until) || user.locked_until)}` : `${Number(user.failed_attempts || 0)} failed`}</td><td><div class="user-actions"><button type="button" data-save-user="${user.id}">Save</button><button type="button" data-revoke-user="${user.id}">Sign out all</button><button type="button" data-reset-user="${user.id}">Reset link</button></div></td></tr>`).join("")}</tbody></table></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>State</th><th>Sessions</th><th>Security</th><th>Actions</th></tr></thead><tbody>${users.map((user, index) => `<tr><td>${index + 1}</td><td><input class="user-inline-name" data-user-name="${user.id}" value="${escapeHtml(user.name)}" /></td><td>${escapeHtml(user.email)}</td><td><select data-user-role="${user.id}">${["viewer", "editor", "admin"].map((role) => `<option ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}</select></td><td><label class="toggle-label"><input type="checkbox" data-user-active="${user.id}" ${user.active ? "checked" : ""} /> Active</label></td><td>${Number(user.session_count || 0)}</td><td>${user.mfa_enabled ? "MFA enabled" : "MFA not enabled"}<small>${user.locked_until ? `Locked until ${escapeHtml(displayDate(user.locked_until) || user.locked_until)}` : `${Number(user.failed_attempts || 0)} failed sign-ins`}</small></td><td><div class="user-actions"><button type="button" data-save-user="${user.id}">Save</button><button type="button" data-revoke-user="${user.id}">Sign out all</button><button type="button" data-reset-user="${user.id}">Reset link</button></div></td></tr>`).join("")}</tbody></table></div>
     </section>
     <section class="card form-card compact-form-card">
       <div class="local-section-heading"><span>Administrator action</span><h2>Create an application account</h2><p>The password is stored only as a PBKDF2 hash.</p></div>
@@ -3767,6 +3836,7 @@ function renderAuthScreen(setupRequired) {
         ${setupRequired ? `<label><span>Name</span><input name="name" autocomplete="name" required /></label>` : ""}
         <label><span>Email</span><input name="email" type="email" autocomplete="username" required /></label>
         <label><span>Password</span><input name="password" type="password" autocomplete="${setupRequired ? "new-password" : "current-password"}" minlength="12" required /></label>
+        ${setupRequired ? "" : `<label id="mfa-login-field" class="hidden"><span>Authenticator or backup code</span><input name="mfa_code" autocomplete="one-time-code" inputmode="numeric" /></label>`}
         ${setupRequired ? `<label><span>Confirm password</span><input name="confirm" type="password" autocomplete="new-password" minlength="12" required /></label>` : ""}
         <div class="auth-error" id="auth-error" role="alert"></div>
         <button class="button button-primary" type="submit">${setupRequired ? "Create administrator" : "Sign in"}</button>
@@ -3788,8 +3858,16 @@ function renderAuthScreen(setupRequired) {
     try {
       const result = await api(`/api/auth/${mode}`, {
         method: "POST",
-        body: JSON.stringify({ name: form.get("name"), email: form.get("email"), password: form.get("password") }),
+        body: JSON.stringify({ name: form.get("name"), email: form.get("email"), password: form.get("password"), mfa_code: form.get("mfa_code") }),
       });
+      if (result.mfa_required && !result.authenticated) {
+        const mfaField = document.querySelector("#mfa-login-field");
+        mfaField?.classList.remove("hidden");
+        const input = mfaField?.querySelector("input");
+        if (input) { input.required = true; input.focus(); }
+        error.textContent = result.message || "Enter your authentication code.";
+        return;
+      }
       state.auth.authenticated = true;
       state.auth.setupRequired = false;
       state.auth.user = result.user;
@@ -3914,6 +3992,7 @@ async function renderSystemCentre() {
   const email = configuration.email || {};
   const scheduler = configuration.scheduler || {};
   const retention = status.retention_preview || {};
+  const operations = status.operations || {};
   const notifications = notificationResult.data || [];
   const migrations = status.migrations || [];
   app.innerHTML = `
@@ -3925,6 +4004,7 @@ async function renderSystemCentre() {
       <article><span>Free storage</span><strong>${formatBytes(Number(status.disk?.free_bytes || 0))}</strong><small>Application data filesystem</small></article>
       <article class="${email.enabled && email.configured ? "system-ready" : "system-hold"}"><span>Email delivery</span><strong>${email.enabled && email.configured ? "Ready" : "Hold"}</strong><small>${email.enabled ? (email.configured ? escapeHtml(email.sender) : "SMTP incomplete") : "Explicitly disabled"}</small></article>
       <article class="${scheduler.enabled ? "system-ready" : "system-hold"}"><span>Scheduler</span><strong>${scheduler.enabled ? (scheduler.running ? "Running" : "Starting") : "Disabled"}</strong><small>${scheduler.last_run_at ? `Last ${escapeHtml(displayDate(scheduler.last_run_at) || scheduler.last_run_at)}` : "No scheduled run yet"}</small></article>
+      <article class="${operations.available && operations.ready && !operations.last_backup_error ? "system-ready" : "system-hold"}"><span>Automated operations</span><strong>${operations.available ? (operations.ready ? "Healthy" : "Attention") : "Not running"}</strong><small>${operations.last_backup_at ? `Verified backup ${escapeHtml(displayDate(operations.last_backup_at) || operations.last_backup_at)}` : (operations.last_check_error || operations.last_backup_error || "No automated backup yet")}</small></article>
     </section>
     <section class="system-layout">
       <article class="card system-settings-card">
@@ -4040,9 +4120,9 @@ async function route() {
     } else if (path === "/archive") {
       await renderArchive();
     } else if (path === "/company-profile") {
-      renderProfile();
+      await renderProfile();
     } else if (path === "/change-password") {
-      renderChangePassword();
+      await renderChangePassword();
     } else if (path === "/audit") {
       await renderAuditLog();
     } else if (path === "/users") {

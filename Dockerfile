@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir --requirement /app/requirements.txt
 COPY --chown=10001:10001 local-app /app/local-app
 COPY --chown=10001:10001 examples /app/examples
 COPY --chown=10001:10001 production-data /app/production-data
-COPY --chown=10001:10001 backup_kompliance.py verify_kompliance_backup.py /app/
+COPY --chown=10001:10001 backup_kompliance.py verify_kompliance_backup.py ops_kompliance.py /app/
 
 RUN mkdir -p /app/local-app/data \
     && chown -R 10001:10001 /app
