@@ -48,12 +48,22 @@ def main() -> None:
             connection = sqlite3.connect(database)
             try:
                 integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-                records = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0]
-                users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-                protected = sum(
-                    str(json.loads(row[0]).get("source", "")).strip().casefold()
-                    == "production read-only export"
-                    for row in connection.execute("SELECT payload FROM records").fetchall()
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                records = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0] if "records" in tables else 0
+                users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] if "users" in tables else 0
+                protected = (
+                    sum(
+                        str(json.loads(row[0]).get("source", "")).strip().casefold()
+                        == "production read-only export"
+                        for row in connection.execute("SELECT payload FROM records").fetchall()
+                    )
+                    if "records" in tables
+                    else 0
                 )
             finally:
                 connection.close()
