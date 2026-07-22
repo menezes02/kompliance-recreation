@@ -61,8 +61,21 @@ Use this checklist with the company pilot user before approving production relea
 - [ ] Reminder window works for 7, 14, 30, 60 and 90 days.
 - [ ] Safe Pass, GA1, risk assessment and local certificate dates are included.
 - [ ] Preparing reminders creates local notification records.
-- [ ] Interface clearly states that no external message was sent.
+- [ ] Repeated preparation skips duplicate reminders for the same record and due date.
+- [ ] Email and scheduler remain disabled before external-service approval.
+- [ ] After approval, a controlled SMTP recipient receives one test message and the delivery history records the result.
 - [ ] Business owner confirms future email recipients, sender and reminder intervals.
+
+## System, privacy and recovery
+
+- [ ] System & privacy reports database integrity as `ok`.
+- [ ] Protected and local record counts are plausible.
+- [ ] Branding settings appear on newly generated certificates and verification pages.
+- [ ] Privacy contact and retention wording have owner approval.
+- [ ] Recovery requests return the same response for known and unknown accounts.
+- [ ] Repeated recovery requests are rate-limited without disclosing the account.
+- [ ] Retention preview and cleanup both report zero protected records.
+- [ ] A backup verifies successfully and restores into a new empty rehearsal directory.
 
 ## Responsive and operational checks
 

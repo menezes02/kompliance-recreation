@@ -1,0 +1,28 @@
+name: kompliance-local-validation
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kompliance_app_example
+    restart: "no"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KOMPLIANCE_APP_AUTH: "1"
+      KOMPLIANCE_SCHEDULER: "0"
+      KOMPLIANCE_EMAIL_DELIVERY: "0"
+    ports:
+      - "127.0.0.1:18090:8090"
+    volumes:
+      - ./source-archive:/app/source-archive:ro
+      - kompliance_data_example:/app/local-app/data
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+volumes:
+  kompliance_data_example:
+    name: kompliance_data_example

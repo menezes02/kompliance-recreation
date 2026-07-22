@@ -105,6 +105,10 @@ presentation/action HTML are not stored in the snapshot.
 - Controlled local workflow workspace with real imported form definitions, draft/resume, final required-field validation, signature pads, evidence attachments and complete submission PDFs
 - Branded induction certificates with unique numbers, expiry dates, scannable verification QR codes, public status pages, replacement history and revocation
 - Expiry centre covering Safe Pass, GA1, risk-assessment and local-certificate dates, with configurable windows and local notification preparation
+- Deduplicated email queue with delivery history, retry state and an opt-in scheduler
+- System and privacy centre with branding, privacy contact, retention preview, database integrity, storage and service readiness
+- Recovery-request throttling and HTTP security headers
+- Verifiable local-data backup and empty-directory restore rehearsal tools
 - Administrator access management for roles, suspension, session revocation and secure one-time reset-link preparation
 - Password recovery with generic account-safe responses, 30-minute one-time tokens and automatic session revocation
 - Five-attempt login lockout with a 15-minute cooling period
@@ -138,7 +142,8 @@ The seed records will be recreated.
 
 ## Pilot boundaries
 
-- Prepared reminder and password-reset messages are stored locally but are not sent externally.
-- SMTP or transactional-email delivery requires an approved provider, sender domain and data-processing decision.
-- Company logo artwork can replace the current text-based certificate brand after approval.
+- Prepared reminder and password-reset messages are stored locally. External delivery is fail-closed and occurs only when SMTP is configured and `KOMPLIANCE_EMAIL_DELIVERY=1`.
+- Scheduled preparation/delivery is disabled until `KOMPLIANCE_SCHEDULER=1` is explicitly set.
+- SMTP or transactional-email delivery still requires an approved provider, sender domain and data-processing decision.
+- Certificate and verification branding follows the organisation settings and includes a generated vector mark; approved final artwork can replace it later without changing certificate data.
 - Production deployment remains gated by `../RELEASE_CHECKLIST.md`.

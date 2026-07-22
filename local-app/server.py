@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Local Kompliance recreation server.
-
-Uses only the Python standard library so the project runs on the current
-machine without npm, Composer, or third-party Python packages.
-"""
+"""Local Kompliance recreation server with isolated writable workflows."""
 
 from __future__ import annotations
 
@@ -16,10 +12,14 @@ import json
 import mimetypes
 import os
 import secrets
+import shutil
+import smtplib
 import sqlite3
 import threading
 import textwrap
+import time
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +46,26 @@ PASSWORD_ITERATIONS = 310_000
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCK_MINUTES = 15
 RESET_TOKEN_MINUTES = 30
+RECOVERY_MAX_ATTEMPTS = 3
+RECOVERY_WINDOW_MINUTES = 15
+STARTED_AT = utc_now() if "utc_now" in globals() else datetime.now(UTC).replace(microsecond=0).isoformat()
+SCHEDULER_STOP = threading.Event()
+SCHEDULER_STATE = {
+    "enabled": os.environ.get("KOMPLIANCE_SCHEDULER", "0").strip() == "1",
+    "running": False,
+    "last_run_at": "",
+    "last_error": "",
+}
+
+DEFAULT_SETTINGS = {
+    "brand_name": "Kompliance",
+    "brand_company": "Kingscroft Developments",
+    "brand_tagline": "Health & Safety Operations",
+    "privacy_contact": "",
+    "compliance_recipient": "",
+    "reminder_days": "30",
+    "retention_days": "365",
+}
 
 
 SEED_RECORDS = {
@@ -224,6 +244,15 @@ def initialize_database() -> None:
             "CREATE INDEX IF NOT EXISTS idx_reset_tokens_user ON password_reset_tokens(user_id)"
         )
         connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                limit_key TEXT PRIMARY KEY,
+                window_started TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_records_resource ON records(resource)"
         )
         connection.execute(
@@ -234,6 +263,11 @@ def initialize_database() -> None:
             )
             """
         )
+        for key, value in DEFAULT_SETTINGS.items():
+            connection.execute(
+                "INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)",
+                (f"setting_{key}", value),
+            )
 
         if PRODUCTION_DATA_PATH.exists():
             production_data = json.loads(
@@ -245,7 +279,15 @@ def initialize_database() -> None:
             ).fetchone()
             imported_version = imported_row["value"] if imported_row else None
             if import_version and import_version != imported_version:
-                connection.execute("DELETE FROM records")
+                protected_ids = []
+                for existing in connection.execute("SELECT id, payload FROM records").fetchall():
+                    try:
+                        existing_payload = json.loads(existing["payload"])
+                    except (TypeError, json.JSONDecodeError):
+                        existing_payload = {}
+                    if is_protected_payload(existing_payload):
+                        protected_ids.append((existing["id"],))
+                connection.executemany("DELETE FROM records WHERE id = ?", protected_ids)
                 for resource, records in production_data.get("records", {}).items():
                     timestamps = production_data.get("timestamps", {}).get(
                         resource, []
@@ -569,6 +611,301 @@ def local_record(connection, resource: str, record_id: int):
     return record
 
 
+def application_settings() -> dict:
+    settings = dict(DEFAULT_SETTINGS)
+    with DB_LOCK, connect_database() as connection:
+        rows = connection.execute(
+            "SELECT key, value FROM metadata WHERE key LIKE 'setting_%'"
+        ).fetchall()
+    for row in rows:
+        settings[row["key"].removeprefix("setting_")] = row["value"]
+    environment_overrides = {
+        "brand_name": "KOMPLIANCE_BRAND_NAME",
+        "brand_company": "KOMPLIANCE_BRAND_COMPANY",
+        "brand_tagline": "KOMPLIANCE_BRAND_TAGLINE",
+        "privacy_contact": "KOMPLIANCE_PRIVACY_CONTACT",
+        "compliance_recipient": "KOMPLIANCE_COMPLIANCE_RECIPIENT",
+    }
+    for key, environment_name in environment_overrides.items():
+        value = os.environ.get(environment_name, "").strip()
+        if value:
+            settings[key] = value
+    return settings
+
+
+def public_email_configuration() -> dict:
+    host = os.environ.get("KOMPLIANCE_SMTP_HOST", "").strip()
+    sender = os.environ.get("KOMPLIANCE_SMTP_FROM", "").strip()
+    base_url = os.environ.get("KOMPLIANCE_BASE_URL", "").strip()
+    enabled = os.environ.get("KOMPLIANCE_EMAIL_DELIVERY", "0").strip() == "1"
+    return {
+        "enabled": enabled,
+        "configured": bool(host and sender and base_url.startswith("https://")),
+        "host_configured": bool(host),
+        "base_url_configured": base_url.startswith("https://"),
+        "sender": sender,
+        "mode": os.environ.get("KOMPLIANCE_SMTP_SECURITY", "starttls").strip().lower(),
+    }
+
+
+def recovery_rate_limit_allowed(limit_key: str) -> bool:
+    now = datetime.now(UTC)
+    window_start = now - timedelta(minutes=RECOVERY_WINDOW_MINUTES)
+    with DB_LOCK, connect_database() as connection:
+        row = connection.execute(
+            "SELECT window_started, attempts FROM rate_limits WHERE limit_key = ?",
+            (limit_key,),
+        ).fetchone()
+        if row is None or datetime.fromisoformat(row["window_started"]) < window_start:
+            connection.execute(
+                "INSERT INTO rate_limits(limit_key, window_started, attempts) VALUES (?, ?, 1) "
+                "ON CONFLICT(limit_key) DO UPDATE SET window_started = excluded.window_started, attempts = 1",
+                (limit_key, now.replace(microsecond=0).isoformat()),
+            )
+            connection.commit()
+            return True
+        attempts = int(row["attempts"] or 0) + 1
+        connection.execute(
+            "UPDATE rate_limits SET attempts = ? WHERE limit_key = ?", (attempts, limit_key)
+        )
+        connection.commit()
+    return attempts <= RECOVERY_MAX_ATTEMPTS
+
+
+def write_system_audit(action: str, resource: str, summary: str = "") -> None:
+    with DB_LOCK, connect_database() as connection:
+        connection.execute(
+            "INSERT INTO audit_log(user_id, actor, action, resource, record_id, summary, created_at) "
+            "VALUES (NULL, 'Kompliance scheduler', ?, ?, NULL, ?, ?)",
+            (action, resource, summary[:500], utc_now()),
+        )
+        connection.commit()
+
+
+def build_compliance_reminder_data(days: int) -> dict:
+    today = datetime.now(UTC).date()
+    cutoff = today + timedelta(days=days)
+    definitions = (
+        ("workers", "safe_pass_expiry", "Safe Pass", "name"),
+        ("ga1", "expiry_date", "GA1 document set", "worker"),
+        ("risk_assessment", "expiry_date", "Risk assessment", "title"),
+        ("local_induction_completions", "expires_at", "Induction certificate", "worker"),
+    )
+    settings = application_settings()
+    items = []
+    missing_dates = 0
+    with DB_LOCK, connect_database() as connection:
+        worker_rows = connection.execute(
+            "SELECT payload FROM records WHERE resource = 'workers'"
+        ).fetchall()
+        worker_emails = {}
+        for worker_row in worker_rows:
+            worker = json.loads(worker_row["payload"])
+            if worker.get("name") and worker.get("email"):
+                worker_emails[str(worker["name"]).strip().casefold()] = str(worker["email"]).strip()
+        for resource, date_field, category, subject_field in definitions:
+            rows = connection.execute(
+                "SELECT * FROM records WHERE resource = ? ORDER BY id DESC", (resource,)
+            ).fetchall()
+            for row in rows:
+                record = row_to_record(row)
+                if resource == "local_induction_completions" and record.get("status") in {"Revoked", "Replaced"}:
+                    continue
+                due = parse_record_date(record.get(date_field))
+                if due is None:
+                    missing_dates += 1
+                    continue
+                if due < today:
+                    state = "Overdue"
+                elif due <= cutoff:
+                    state = "Due soon"
+                else:
+                    state = "Current"
+                subject = record.get(subject_field) or record.get("name") or record.get("title") or f"Record {record['id']}"
+                recipient = str(record.get("email") or "").strip()
+                if not recipient:
+                    recipient = worker_emails.get(str(subject).strip().casefold(), "")
+                if not recipient:
+                    recipient = settings.get("compliance_recipient", "")
+                items.append(
+                    {
+                        "resource": resource,
+                        "record_id": record["id"],
+                        "category": category,
+                        "subject": subject,
+                        "site": record.get("site") or record.get("sites") or "",
+                        "recipient": recipient,
+                        "due_date": due.isoformat(),
+                        "days_remaining": (due - today).days,
+                        "state": state,
+                    }
+                )
+    order = {"Overdue": 0, "Due soon": 1, "Current": 2}
+    items.sort(key=lambda item: (order[item["state"]], item["due_date"], str(item["subject"]).casefold()))
+    return {
+        "days": days,
+        "generated_at": utc_now(),
+        "counts": {
+            "overdue": sum(item["state"] == "Overdue" for item in items),
+            "due_soon": sum(item["state"] == "Due soon" for item in items),
+            "current": sum(item["state"] == "Current" for item in items),
+            "missing_date": missing_dates,
+        },
+        "data": items,
+    }
+
+
+def prepare_compliance_notifications(days: int) -> dict:
+    reminder_data = build_compliance_reminder_data(days)
+    due_items = [item for item in reminder_data["data"] if item["state"] in {"Overdue", "Due soon"}]
+    now = utc_now()
+    created = []
+    duplicates = 0
+    with DB_LOCK, connect_database() as connection:
+        existing_rows = connection.execute(
+            "SELECT payload FROM records WHERE resource = 'local_notifications'"
+        ).fetchall()
+        fingerprints = {
+            json.loads(row["payload"]).get("fingerprint")
+            for row in existing_rows
+            if json.loads(row["payload"]).get("kind") == "compliance_reminder"
+        }
+        for item in due_items:
+            fingerprint = hashlib.sha256(
+                f"{item['resource']}:{item['record_id']}:{item['due_date']}".encode("utf-8")
+            ).hexdigest()
+            if fingerprint in fingerprints:
+                duplicates += 1
+                continue
+            notification = {
+                "kind": "compliance_reminder",
+                "channel": "Email",
+                "recipient": item["recipient"],
+                "subject": f"{item['category']} {item['state'].lower()}: {item['subject']}",
+                "message": f"{item['category']} for {item['subject']} is {item['state'].lower()} with due date {item['due_date']}.",
+                "related_resource": item["resource"],
+                "related_record_id": item["record_id"],
+                "due_date": item["due_date"],
+                "fingerprint": fingerprint,
+                "delivery_status": "prepared",
+                "status": "Prepared - not sent",
+                "attempts": 0,
+                "source": "local controlled workspace",
+                "local_only": True,
+            }
+            cursor = connection.execute(
+                "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_notifications', ?, ?, ?)",
+                (json.dumps(notification), now, now),
+            )
+            created.append(cursor.lastrowid)
+            fingerprints.add(fingerprint)
+        connection.commit()
+    return {"created": len(created), "ids": created, "duplicates": duplicates, "sent": 0}
+
+
+def send_notification_email(notification: dict) -> None:
+    configuration = public_email_configuration()
+    if not configuration["enabled"]:
+        raise RuntimeError("Email delivery is disabled")
+    if not configuration["configured"]:
+        raise RuntimeError("SMTP host and sender are not configured")
+    recipient = str(notification.get("recipient", "")).strip()
+    if "@" not in recipient:
+        raise ValueError("A valid notification recipient is required")
+    message = EmailMessage()
+    message["From"] = configuration["sender"]
+    message["To"] = recipient
+    message["Subject"] = str(notification.get("subject", "Kompliance notification"))[:240]
+    message.set_content(str(notification.get("message", "")))
+    host = os.environ["KOMPLIANCE_SMTP_HOST"].strip()
+    port = int(os.environ.get("KOMPLIANCE_SMTP_PORT", "465" if configuration["mode"] == "ssl" else "587"))
+    timeout = min(max(int(os.environ.get("KOMPLIANCE_SMTP_TIMEOUT", "15")), 3), 60)
+    smtp_class = smtplib.SMTP_SSL if configuration["mode"] == "ssl" else smtplib.SMTP
+    with smtp_class(host, port, timeout=timeout) as client:
+        if configuration["mode"] == "starttls":
+            client.starttls()
+        username = os.environ.get("KOMPLIANCE_SMTP_USERNAME", "").strip()
+        password = os.environ.get("KOMPLIANCE_SMTP_PASSWORD", "")
+        if username:
+            client.login(username, password)
+        client.send_message(message)
+
+
+def dispatch_notification_queue(limit: int = 100, record_ids: set[int] | None = None) -> dict:
+    configuration = public_email_configuration()
+    if not configuration["enabled"] or not configuration["configured"]:
+        return {"sent": 0, "failed": 0, "skipped": 0, "enabled": configuration["enabled"], "configured": configuration["configured"]}
+    with DB_LOCK, connect_database() as connection:
+        rows = connection.execute(
+            "SELECT * FROM records WHERE resource = 'local_notifications' ORDER BY id ASC"
+        ).fetchall()
+    sent = failed = skipped = 0
+    for row in rows:
+        if sent + failed >= limit:
+            break
+        notification = row_to_record(row)
+        if record_ids is not None and notification["id"] not in record_ids:
+            continue
+        if notification.get("delivery_status", "prepared") not in {"prepared", "failed"}:
+            continue
+        if int(notification.get("attempts") or 0) >= 3 and record_ids is None:
+            skipped += 1
+            continue
+        if "@" not in str(notification.get("recipient", "")):
+            skipped += 1
+            continue
+        updated = {key: value for key, value in notification.items() if key not in {"id", "_read_only", "created_at", "updated_at"}}
+        updated["attempts"] = int(updated.get("attempts") or 0) + 1
+        try:
+            send_notification_email(notification)
+            updated.update({"delivery_status": "sent", "status": "Sent", "sent_at": utc_now(), "last_error": ""})
+            sent += 1
+        except Exception as error:
+            updated.update({"delivery_status": "failed", "status": "Delivery failed", "last_error": str(error)[:300], "last_attempt_at": utc_now()})
+            failed += 1
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            connection.execute(
+                "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_notifications' AND id = ?",
+                (json.dumps(updated), now, notification["id"]),
+            )
+            connection.commit()
+    return {"sent": sent, "failed": failed, "skipped": skipped, "enabled": True, "configured": True}
+
+
+def retention_cleanup(dry_run: bool = True) -> dict:
+    settings = application_settings()
+    retention_days = min(max(int(settings.get("retention_days", "365")), 30), 3650)
+    now = datetime.now(UTC)
+    cutoff = (now - timedelta(days=retention_days)).replace(microsecond=0).isoformat()
+    now_text = now.replace(microsecond=0).isoformat()
+    with DB_LOCK, connect_database() as connection:
+        notification_ids = [
+            row["id"] for row in connection.execute(
+                "SELECT id FROM records WHERE resource = 'local_notifications' AND created_at < ?", (cutoff,)
+            ).fetchall()
+        ]
+        expired_sessions = connection.execute(
+            "SELECT COUNT(*) FROM sessions WHERE expires_at <= ?", (now_text,)
+        ).fetchone()[0]
+        expired_tokens = connection.execute(
+            "SELECT COUNT(*) FROM password_reset_tokens WHERE expires_at <= ? OR used_at IS NOT NULL", (now_text,)
+        ).fetchone()[0]
+        if not dry_run:
+            connection.executemany("DELETE FROM records WHERE resource = 'local_notifications' AND id = ?", [(item,) for item in notification_ids])
+            connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_text,))
+            connection.execute("DELETE FROM password_reset_tokens WHERE expires_at <= ? OR used_at IS NOT NULL", (now_text,))
+            connection.commit()
+    return {
+        "dry_run": dry_run,
+        "retention_days": retention_days,
+        "local_notifications": len(notification_ids),
+        "expired_sessions": expired_sessions,
+        "expired_reset_tokens": expired_tokens,
+        "protected_records": 0,
+    }
+
+
 def password_hash(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac(
@@ -676,6 +1013,8 @@ def build_certificate_pdf(
     expires_at: str,
     certificate_number: str,
     verification_url: str,
+    brand_name: str = "Kompliance",
+    brand_tagline: str = "Health & Safety Operations",
 ) -> bytes:
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=1)
     qr.add_data(verification_url)
@@ -704,12 +1043,16 @@ def build_certificate_pdf(
         ("F2", 10, 64, 438, f"Certificate: {certificate_number}"),
         ("F1", 8, 64, 410, "Verify this certificate using the QR code or address below:"),
         ("F1", 7, 64, 392, verification_url),
-        ("F1", 8, 64, 62, "Generated by the controlled Kompliance workflow. Status must be checked online."),
+        ("F1", 8, 64, 62, f"Generated by {brand_name} · {brand_tagline}. Status must be checked online."),
     ]
     commands = [
         "0.04 0.38 0.30 rg 0 780 595 62 re f",
         "1 1 1 rg",
-        "BT /F2 13 Tf 64 804 Td (KOMPLIANCE) Tj ET",
+        "34 796 20 20 re f",
+        "0.04 0.38 0.30 rg",
+        "BT /F2 13 Tf 39 801 Td (K) Tj ET",
+        "1 1 1 rg",
+        f"BT /F2 13 Tf 64 804 Td ({pdf_escape(brand_name.upper())}) Tj ET",
         "0 0 0 rg",
     ]
     commands.extend(
@@ -738,12 +1081,26 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             f"{self.address_string()} {format_string % args}"
         )
 
+    def send_security_headers(self, html_document: bool = False) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)")
+        if html_document:
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'self'; "
+                "form-action 'self'; frame-ancestors 'none'",
+            )
+
     def send_json(self, payload, status=HTTPStatus.OK, headers=None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_security_headers()
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -755,8 +1112,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+        self.send_security_headers(html_document=True)
         self.end_headers()
         self.wfile.write(body)
 
@@ -783,6 +1139,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             "Cache-Control",
             "public, max-age=3600" if cache else "no-store",
         )
+        self.send_security_headers(html_document=content_type.startswith("text/html"))
         self.end_headers()
         with resolved.open("rb") as handle:
             while chunk := handle.read(256 * 1024):
@@ -805,6 +1162,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(stat.st_size))
         self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Disposition", f'inline; filename="{resolved.name}"')
+        self.send_security_headers()
         self.end_headers()
         with resolved.open("rb") as handle:
             while chunk := handle.read(256 * 1024):
@@ -925,6 +1283,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         return csrf_token, cookie
 
     def application_base_url(self) -> str:
+        configured = os.environ.get("KOMPLIANCE_BASE_URL", "").strip().rstrip("/")
+        if configured:
+            return configured
         forwarded_host = self.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
         host = forwarded_host or self.headers.get("Host", "127.0.0.1:8090")
         forwarded_proto = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
@@ -941,10 +1302,14 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         reset_url = f"{self.application_base_url()}/reset-password?token={raw_token}"
         notification_payload = {
             "kind": "password_reset",
+            "channel": "Email",
             "recipient": user_row["email"],
             "subject": "Kompliance password reset",
+            "message": f"Use this secure link within {RESET_TOKEN_MINUTES} minutes to reset your Kompliance password: {reset_url}",
             "reset_url": reset_url,
+            "delivery_status": "prepared",
             "status": "Prepared - not sent",
+            "attempts": 0,
             "expires_at": expires_at,
             "source": "local controlled workspace",
             "local_only": True,
@@ -1145,15 +1510,29 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
         email = str(payload.get("email", "")).strip().lower()
+        remote_address = str(self.client_address[0] if self.client_address else "unknown")
+        rate_key = hashlib.sha256(
+            f"recovery:{remote_address}:{email}".encode("utf-8")
+        ).hexdigest()
+        address_key = hashlib.sha256(f"recovery-address:{remote_address}".encode("utf-8")).hexdigest()
+        email_allowed = recovery_rate_limit_allowed(rate_key)
+        address_allowed = recovery_rate_limit_allowed(address_key)
+        allowed = email_allowed and address_allowed
         with DB_LOCK, connect_database() as connection:
             row = connection.execute(
                 "SELECT id, email, name FROM users WHERE email = ? AND active = 1", (email,)
             ).fetchone()
-        if row:
-            self.issue_password_reset(row)
+        if row and allowed:
+            _, _, notification_id = self.issue_password_reset(row)
+            delivery = dispatch_notification_queue(limit=1, record_ids={notification_id})
             self.write_audit(None, "password_reset_requested", "auth", summary=f"Reset prepared for {email[:180]}")
+            if delivery.get("sent"):
+                self.write_audit(None, "password_reset_sent", "auth", summary="Password reset email delivered")
+        elif row:
+            self.write_audit(None, "password_reset_rate_limited", "auth", summary="Recovery rate limit applied")
         else:
             self.write_audit(None, "password_reset_requested", "auth", summary="Reset requested for unknown account")
+        time.sleep(0.15)
         self.send_json(
             {"accepted": True, "message": "If the account exists, a reset message has been prepared for secure delivery."},
             HTTPStatus.ACCEPTED,
@@ -1321,6 +1700,136 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             {"reset_url": reset_url, "expires_at": expires_at, "notification_id": notification_id},
             HTTPStatus.CREATED,
         )
+
+    def handle_settings_get(self, user) -> None:
+        self.send_json(
+            {
+                "settings": application_settings(),
+                "email": public_email_configuration(),
+                "scheduler": dict(SCHEDULER_STATE),
+            }
+        )
+
+    def handle_settings_update(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        updates = {}
+        for key in DEFAULT_SETTINGS:
+            if key not in payload:
+                continue
+            value = str(payload.get(key, "")).strip()
+            if len(value) > 240:
+                self.send_json({"error": f"{key} is too long."}, HTTPStatus.BAD_REQUEST)
+                return
+            updates[key] = value
+        for numeric_key, minimum, maximum in (("reminder_days", 1, 365), ("retention_days", 30, 3650)):
+            if numeric_key in updates:
+                try:
+                    updates[numeric_key] = str(min(max(int(updates[numeric_key]), minimum), maximum))
+                except ValueError:
+                    self.send_json({"error": f"{numeric_key} must be a number."}, HTTPStatus.BAD_REQUEST)
+                    return
+        for email_key in ("privacy_contact", "compliance_recipient"):
+            if updates.get(email_key) and "@" not in updates[email_key]:
+                self.send_json({"error": f"{email_key} must be a valid email address."}, HTTPStatus.BAD_REQUEST)
+                return
+        with DB_LOCK, connect_database() as connection:
+            for key, value in updates.items():
+                connection.execute(
+                    "INSERT INTO metadata(key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (f"setting_{key}", value),
+                )
+            connection.commit()
+        self.write_audit(user, "settings_updated", "settings", summary=f"Updated: {', '.join(sorted(updates))}")
+        self.handle_settings_get(user)
+
+    def handle_system_status(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+            rows = connection.execute("SELECT payload FROM records").fetchall()
+            active_sessions = connection.execute(
+                "SELECT COUNT(*) FROM sessions WHERE expires_at > ?", (utc_now(),)
+            ).fetchone()[0]
+            audit_events = connection.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        protected = local = 0
+        for row in rows:
+            try:
+                record = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if is_protected_payload(record):
+                protected += 1
+            elif record.get("local_only"):
+                local += 1
+        disk = shutil.disk_usage(DATA_ROOT)
+        self.send_json(
+            {
+                "ok": integrity == "ok",
+                "started_at": STARTED_AT,
+                "database": {"integrity": integrity, "path": DATABASE_PATH.name},
+                "records": {"protected": protected, "local": local, "total": len(rows)},
+                "active_sessions": active_sessions,
+                "audit_events": audit_events,
+                "disk": {"free_bytes": disk.free, "total_bytes": disk.total},
+                "email": public_email_configuration(),
+                "scheduler": dict(SCHEDULER_STATE),
+                "retention_preview": retention_cleanup(dry_run=True),
+            }
+        )
+
+    def handle_notifications_send(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        identifiers = payload.get("ids")
+        record_ids = None
+        if isinstance(identifiers, list):
+            record_ids = {int(value) for value in identifiers if str(value).isdigit()}
+        result = dispatch_notification_queue(
+            limit=min(max(int(payload.get("limit", 100)), 1), 500), record_ids=record_ids
+        )
+        self.write_audit(
+            user,
+            "notification_delivery_run",
+            "local_notifications",
+            summary=f"Sent {result['sent']}; failed {result['failed']}; skipped {result['skipped']}",
+        )
+        self.send_json(result)
+
+    def handle_retention_cleanup(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        if payload.get("confirmation") != "PURGE_LOCAL_EXPIRED_DATA":
+            self.send_json(
+                {"error": "Exact confirmation PURGE_LOCAL_EXPIRED_DATA is required."},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+        result = retention_cleanup(dry_run=False)
+        self.write_audit(
+            user,
+            "retention_cleanup",
+            "local_notifications",
+            summary=f"Removed {result['local_notifications']} expired local notification(s); protected records removed: 0",
+        )
+        self.send_json(result)
+
+    def handle_privacy_page(self) -> None:
+        settings = application_settings()
+        brand = html.escape(settings.get("brand_name", "Kompliance"))
+        contact = html.escape(settings.get("privacy_contact") or "Contact your organisation administrator")
+        retention = html.escape(settings.get("retention_days", "365"))
+        markup = f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Privacy · {brand}</title></head><body style='font:16px/1.6 system-ui;background:#f4f8f7;color:#17324d;margin:0'><main style='max-width:760px;margin:3rem auto;background:white;padding:2.5rem;border-radius:20px'><p style='color:#08745d;font-weight:700'>{brand}</p><h1>Privacy and data handling</h1><p>This controlled workspace stores health and safety administration records for authorised organisational users. Access is role-based and security-sensitive changes are audited.</p><h2>Data boundaries</h2><p>Imported customer snapshot records are immutable. New assignments, submissions, evidence, certificates, notifications and account records are stored separately in the local application data area.</p><h2>Retention</h2><p>Prepared notification history is retained for up to {retention} days unless the organisation changes that setting. Expired sessions and reset tokens can be removed by an administrator. Protected imported records are never removed by the retention tool.</p><h2>Your rights and contact</h2><p>For access, correction, retention or deletion requests, contact: <strong>{contact}</strong>.</p><p><a href='/'>Return to Kompliance</a></p></main></body></html>"""
+        self.send_html(markup)
 
     def handle_local_upload(self, user) -> None:
         title = unquote(self.headers.get("X-Upload-Title", "")).strip()
@@ -1583,6 +2092,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         certificate_number = f"KMP-{datetime.now(UTC):%Y%m%d}-{secrets.token_hex(4).upper()}"
         verification_token = secrets.token_urlsafe(18)
         verification_url = f"{self.application_base_url()}/verify/{verification_token}"
+        settings = application_settings()
         certificate_root = DATA_ROOT / "certificates"
         certificate_root.mkdir(parents=True, exist_ok=True)
         stored_name = f"induction-{secrets.token_hex(12)}.pdf"
@@ -1595,6 +2105,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             expires_at,
             certificate_number,
             verification_url,
+            settings.get("brand_name", "Kompliance"),
+            settings.get("brand_tagline", "Health & Safety Operations"),
         )
         (certificate_root / stored_name).write_bytes(pdf)
         record_payload = {
@@ -1665,60 +2177,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         self.send_json({"id": record_id, **updated})
 
     def compliance_reminder_data(self, days: int):
-        today = datetime.now(UTC).date()
-        cutoff = today + timedelta(days=days)
-        definitions = (
-            ("workers", "safe_pass_expiry", "Safe Pass", "name"),
-            ("ga1", "expiry_date", "GA1 document set", "worker"),
-            ("risk_assessment", "expiry_date", "Risk assessment", "title"),
-            ("local_induction_completions", "expires_at", "Induction certificate", "worker"),
-        )
-        items = []
-        missing_dates = 0
-        with DB_LOCK, connect_database() as connection:
-            for resource, date_field, category, subject_field in definitions:
-                rows = connection.execute(
-                    "SELECT * FROM records WHERE resource = ? ORDER BY id DESC", (resource,)
-                ).fetchall()
-                for row in rows:
-                    record = row_to_record(row)
-                    if resource == "local_induction_completions" and record.get("status") in {"Revoked", "Replaced"}:
-                        continue
-                    due = parse_record_date(record.get(date_field))
-                    if due is None:
-                        missing_dates += 1
-                        continue
-                    if due < today:
-                        state = "Overdue"
-                    elif due <= cutoff:
-                        state = "Due soon"
-                    else:
-                        state = "Current"
-                    items.append(
-                        {
-                            "resource": resource,
-                            "record_id": record["id"],
-                            "category": category,
-                            "subject": record.get(subject_field) or record.get("name") or record.get("title") or f"Record {record['id']}",
-                            "site": record.get("site") or record.get("sites") or "",
-                            "due_date": due.isoformat(),
-                            "days_remaining": (due - today).days,
-                            "state": state,
-                        }
-                    )
-        order = {"Overdue": 0, "Due soon": 1, "Current": 2}
-        items.sort(key=lambda item: (order[item["state"]], item["due_date"], str(item["subject"]).casefold()))
-        return {
-            "days": days,
-            "generated_at": utc_now(),
-            "counts": {
-                "overdue": sum(item["state"] == "Overdue" for item in items),
-                "due_soon": sum(item["state"] == "Due soon" for item in items),
-                "current": sum(item["state"] == "Current" for item in items),
-                "missing_date": missing_dates,
-            },
-            "data": items,
-        }
+        return build_compliance_reminder_data(days)
 
     def handle_compliance_reminders(self, query: str) -> None:
         params = parse_qs(query)
@@ -1735,41 +2194,23 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
         days = min(max(int(payload.get("days", 30)), 1), 365)
-        reminder_data = self.compliance_reminder_data(days)
-        due_items = [item for item in reminder_data["data"] if item["state"] in {"Overdue", "Due soon"}]
-        now = utc_now()
-        created = []
-        with DB_LOCK, connect_database() as connection:
-            for item in due_items:
-                notification = {
-                    "kind": "compliance_reminder",
-                    "channel": "Email",
-                    "recipient": "To be assigned",
-                    "subject": f"{item['category']} {item['state'].lower()}: {item['subject']}",
-                    "message": f"{item['category']} for {item['subject']} is {item['state'].lower()} with due date {item['due_date']}.",
-                    "related_resource": item["resource"],
-                    "related_record_id": item["record_id"],
-                    "status": "Prepared - not sent",
-                    "source": "local controlled workspace",
-                    "local_only": True,
-                }
-                cursor = connection.execute(
-                    "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_notifications', ?, ?, ?)",
-                    (json.dumps(notification), now, now),
-                )
-                created.append(cursor.lastrowid)
-            connection.commit()
-        self.write_audit(user, "notifications_prepared", "local_notifications", summary=f"Prepared {len(created)} compliance reminder(s); none sent")
-        self.send_json({"created": len(created), "ids": created, "sent": 0}, HTTPStatus.CREATED)
+        result = prepare_compliance_notifications(days)
+        self.write_audit(
+            user,
+            "notifications_prepared",
+            "local_notifications",
+            summary=f"Prepared {result['created']} compliance reminder(s); {result['duplicates']} duplicate(s) skipped",
+        )
+        self.send_json(result, HTTPStatus.CREATED)
 
     def handle_public_certificate(self, token: str) -> None:
         with DB_LOCK, connect_database() as connection:
             rows = connection.execute(
                 "SELECT * FROM records WHERE resource = 'local_induction_completions' ORDER BY id DESC"
             ).fetchall()
+        certificates = [row_to_record(row) for row in rows]
         certificate = next(
-            (row_to_record(row) for row in rows if row_to_record(row).get("verification_token") == token),
-            None,
+            (record for record in certificates if record.get("verification_token") == token), None
         )
         if certificate is None:
             self.send_html(
@@ -1782,10 +2223,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if status == "Active" and expiry and expiry < datetime.now(UTC).date():
             status = "Expired"
         safe = {key: html.escape(str(certificate.get(key, ""))) for key in ("certificate_number", "company", "worker", "induction", "site", "completed_at", "expires_at")}
+        brand = html.escape(application_settings().get("brand_name", "Kompliance").upper())
         colour = "#0f8b6d" if status == "Active" else "#c2414b"
         markup = f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Certificate verification</title></head>
         <body style='margin:0;background:#f3f7f6;font-family:system-ui;color:#17324a'><main style='max-width:680px;margin:8vh auto;background:white;border-radius:18px;padding:2rem;box-shadow:0 20px 60px #17324a20'>
-        <div style='color:#0f6f5b;font-weight:800;letter-spacing:.08em'>KOMPLIANCE</div><h1>Certificate verification</h1>
+        <div style='color:#0f6f5b;font-weight:800;letter-spacing:.08em'>{brand}</div><h1>Certificate verification</h1>
         <p style='display:inline-block;background:{colour};color:white;border-radius:999px;padding:.45rem .85rem;font-weight:700'>{html.escape(status)}</p>
         <dl style='display:grid;grid-template-columns:10rem 1fr;gap:.8rem;border-top:1px solid #dce7e4;padding-top:1.5rem'>
         <dt>Certificate</dt><dd>{safe['certificate_number']}</dd><dt>Company</dt><dd>{safe['company']}</dd><dt>Worker</dt><dd>{safe['worker']}</dd><dt>Induction</dt><dd>{safe['induction']}</dd><dt>Site</dt><dd>{safe['site']}</dd><dt>Completed</dt><dd>{safe['completed_at']}</dd><dt>Valid until</dt><dd>{safe['expires_at']}</dd></dl>
@@ -1797,7 +2239,16 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
 
         if path == "/api/health":
-            self.send_json({"ok": True, "service": "kompliance-local"})
+            self.send_json({"ok": True, "service": "kompliance-local", "started_at": STARTED_AT})
+            return
+        if path == "/api/health/ready":
+            try:
+                with DB_LOCK, connect_database() as connection:
+                    database_ok = connection.execute("SELECT 1").fetchone()[0] == 1
+                ready = bool(database_ok and DATA_ROOT.exists() and ARCHIVE_ROOT.exists())
+            except sqlite3.Error:
+                ready = False
+            self.send_json({"ok": ready, "service": "kompliance-local"}, HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE)
             return
         if path == "/api/auth/status":
             self.handle_auth_status()
@@ -1805,6 +2256,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path.startswith("/verify/"):
             token = path.removeprefix("/verify/").strip("/")
             self.handle_public_certificate(token)
+            return
+        if path == "/privacy":
+            self.handle_privacy_page()
             return
         if path.startswith("/static/"):
             relative = path.removeprefix("/static/")
@@ -1821,6 +2275,16 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/users":
             self.handle_users_get()
+            return
+        if path == "/api/settings":
+            settings_user = self.require_user()
+            if settings_user is not None:
+                self.handle_settings_get(settings_user)
+            return
+        if path == "/api/system/status":
+            status_user = self.require_user({"admin"})
+            if status_user is not None:
+                self.handle_system_status(status_user)
             return
         if path == "/api/compliance/reminders":
             self.handle_compliance_reminders(parsed.query)
@@ -1919,6 +2383,18 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/compliance/notifications/prepare":
             self.handle_compliance_prepare(user)
             return
+        if parsed.path == "/api/compliance/notifications/send":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_notifications_send(user)
+            return
+        if parsed.path == "/api/system/retention-cleanup":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_retention_cleanup(user)
+            return
         if parsed.path.startswith("/api/resources/"):
             self.handle_resource_create(parsed.path)
             return
@@ -1936,6 +2412,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
                 return
             self.handle_user_update(user, int(user_match[2]))
+            return
+        if parsed.path == "/api/settings":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_settings_update(user)
             return
         if parsed.path.startswith("/api/resources/"):
             self.handle_resource_update(parsed.path)
@@ -2245,6 +2727,37 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         )
 
 
+def run_scheduled_maintenance() -> dict:
+    settings = application_settings()
+    days = min(max(int(settings.get("reminder_days", "30")), 1), 365)
+    prepared = prepare_compliance_notifications(days)
+    delivered = dispatch_notification_queue(limit=500)
+    retained = retention_cleanup(dry_run=False)
+    result = {"prepared": prepared, "delivered": delivered, "retention": retained}
+    write_system_audit(
+        "scheduled_maintenance",
+        "system",
+        f"Prepared {prepared['created']}; sent {delivered['sent']}; expired local notifications removed {retained['local_notifications']}",
+    )
+    return result
+
+
+def scheduler_worker() -> None:
+    interval = min(max(int(os.environ.get("KOMPLIANCE_SCHEDULER_INTERVAL_SECONDS", "3600")), 60), 86400)
+    SCHEDULER_STATE["running"] = True
+    try:
+        while not SCHEDULER_STOP.wait(interval):
+            try:
+                run_scheduled_maintenance()
+                SCHEDULER_STATE["last_run_at"] = utc_now()
+                SCHEDULER_STATE["last_error"] = ""
+            except Exception as error:
+                SCHEDULER_STATE["last_error"] = str(error)[:300]
+                write_system_audit("scheduled_maintenance_failed", "system", str(error)[:300])
+    finally:
+        SCHEDULER_STATE["running"] = False
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -2255,6 +2768,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     initialize_database()
+    scheduler_thread = None
+    if SCHEDULER_STATE["enabled"]:
+        SCHEDULER_STOP.clear()
+        scheduler_thread = threading.Thread(target=scheduler_worker, name="kompliance-scheduler", daemon=True)
+        scheduler_thread.start()
     server = ThreadingHTTPServer((args.host, args.port), KomplianceHandler)
     print(f"Kompliance Local running at http://{args.host}:{args.port}")
     try:
@@ -2262,6 +2780,9 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        SCHEDULER_STOP.set()
+        if scheduler_thread is not None:
+            scheduler_thread.join(timeout=2)
         server.server_close()
 
 

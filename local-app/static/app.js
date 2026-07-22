@@ -3237,8 +3237,12 @@ async function renderUserManagement() {
   document.querySelectorAll("[data-reset-user]").forEach((button) => button.addEventListener("click", async () => {
     try {
       const result = await api(`/api/users/${button.dataset.resetUser}/reset-link`, { method: "POST", body: "{}" });
-      await navigator.clipboard.writeText(result.reset_url);
-      showToast("Secure reset link copied. It expires in 30 minutes.");
+      try {
+        await navigator.clipboard.writeText(result.reset_url);
+        showToast("Secure reset link copied. It expires in 30 minutes.");
+      } catch {
+        window.prompt("Copy this secure reset link. It expires in 30 minutes:", result.reset_url);
+      }
     } catch (error) { showToast(error.message, "error"); }
   }));
 }
@@ -3567,6 +3571,7 @@ function applyAuthContext() {
   document.querySelector(".avatar").textContent = firstName[0]?.toUpperCase() || "U";
   document.querySelector("#audit-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#users-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#system-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#logout-action")?.classList.toggle("hidden", !state.auth.enabled);
 }
 
@@ -3587,6 +3592,7 @@ function renderAuthScreen(setupRequired) {
         <div class="auth-error" id="auth-error" role="alert"></div>
         <button class="button button-primary" type="submit">${setupRequired ? "Create administrator" : "Sign in"}</button>
         ${setupRequired ? "" : `<button class="auth-text-button" id="forgot-password" type="button">Forgot your password?</button>`}
+        <a class="auth-privacy-link" href="/privacy">Privacy and data handling</a>
       </form>
       <small>Protected by the outer gateway and application-level session security.</small>
     </section>
@@ -3715,14 +3721,95 @@ function renderContact() {
   });
 }
 
+async function renderSystemCentre() {
+  const [configuration, status, notificationResult] = await Promise.all([
+    api("/api/settings"),
+    api("/api/system/status"),
+    api("/api/resources/local_notifications?limit=250"),
+  ]);
+  const settings = configuration.settings || {};
+  const email = configuration.email || {};
+  const scheduler = configuration.scheduler || {};
+  const retention = status.retention_preview || {};
+  const notifications = notificationResult.data || [];
+  app.innerHTML = `
+    ${pageHeader("System & privacy", "Release readiness, branding, delivery and retention controls")}
+    <section class="system-status-grid">
+      <article><span>Database</span><strong>${escapeHtml(status.database?.integrity || "unknown")}</strong><small>${Number(status.records?.total || 0).toLocaleString()} records</small></article>
+      <article><span>Protected snapshot</span><strong>${Number(status.records?.protected || 0).toLocaleString()}</strong><small>Immutable imported records</small></article>
+      <article><span>Local records</span><strong>${Number(status.records?.local || 0).toLocaleString()}</strong><small>Controlled writable records</small></article>
+      <article><span>Free storage</span><strong>${formatBytes(Number(status.disk?.free_bytes || 0))}</strong><small>Application data filesystem</small></article>
+      <article class="${email.enabled && email.configured ? "system-ready" : "system-hold"}"><span>Email delivery</span><strong>${email.enabled && email.configured ? "Ready" : "Hold"}</strong><small>${email.enabled ? (email.configured ? escapeHtml(email.sender) : "SMTP incomplete") : "Explicitly disabled"}</small></article>
+      <article class="${scheduler.enabled ? "system-ready" : "system-hold"}"><span>Scheduler</span><strong>${scheduler.enabled ? (scheduler.running ? "Running" : "Starting") : "Disabled"}</strong><small>${scheduler.last_run_at ? `Last ${escapeHtml(displayDate(scheduler.last_run_at) || scheduler.last_run_at)}` : "No scheduled run yet"}</small></article>
+    </section>
+    <section class="system-layout">
+      <article class="card system-settings-card">
+        <div class="local-section-heading"><span>Organisation</span><h2>Branding and governance</h2><p>Non-secret settings are stored locally. Environment variables can override them during deployment.</p></div>
+        <form id="system-settings-form" class="system-settings-form">
+          <label><span>Product name</span><input name="brand_name" value="${escapeHtml(settings.brand_name || "")}" required /></label>
+          <label><span>Organisation</span><input name="brand_company" value="${escapeHtml(settings.brand_company || "")}" required /></label>
+          <label><span>Brand tagline</span><input name="brand_tagline" value="${escapeHtml(settings.brand_tagline || "")}" required /></label>
+          <label><span>Privacy contact</span><input name="privacy_contact" type="email" value="${escapeHtml(settings.privacy_contact || "")}" placeholder="privacy@example.ie" /></label>
+          <label><span>Default compliance recipient</span><input name="compliance_recipient" type="email" value="${escapeHtml(settings.compliance_recipient || "")}" placeholder="safety@example.ie" /></label>
+          <label><span>Reminder window (days)</span><input name="reminder_days" type="number" min="1" max="365" value="${escapeHtml(settings.reminder_days || "30")}" /></label>
+          <label><span>Notification retention (days)</span><input name="retention_days" type="number" min="30" max="3650" value="${escapeHtml(settings.retention_days || "365")}" /></label>
+          <div class="system-form-actions"><button class="button button-primary">Save settings</button><a class="button button-secondary" href="/privacy" target="_blank" rel="noopener">View privacy notice</a></div>
+        </form>
+      </article>
+      <article class="card system-operations-card">
+        <div class="local-section-heading"><span>Operations</span><h2>Delivery and retention</h2><p>External email remains fail-closed until explicitly enabled in the deployment environment.</p></div>
+        <dl class="system-detail-list"><div><dt>SMTP host</dt><dd>${email.host_configured ? "Configured" : "Not configured"}</dd></div><div><dt>Canonical HTTPS URL</dt><dd>${email.base_url_configured ? "Configured" : "Not configured"}</dd></div><div><dt>Sender</dt><dd>${escapeHtml(email.sender || "Not configured")}</dd></div><div><dt>Security</dt><dd>${escapeHtml(email.mode || "starttls")}</dd></div><div><dt>Queued history</dt><dd>${notifications.length.toLocaleString()}</dd></div></dl>
+        <button class="button button-primary" id="deliver-queue" ${email.enabled && email.configured ? "" : "disabled"}>Deliver prepared queue</button>
+        <div class="retention-preview"><strong>Retention preview</strong><span>${Number(retention.local_notifications || 0)} old local notifications</span><span>${Number(retention.expired_sessions || 0)} expired sessions</span><span>${Number(retention.expired_reset_tokens || 0)} expired reset tokens</span><span>0 protected records</span></div>
+        <button class="button button-danger" id="run-retention" ${Number(retention.local_notifications || 0) + Number(retention.expired_sessions || 0) + Number(retention.expired_reset_tokens || 0) ? "" : "disabled"}>Remove expired local data</button>
+      </article>
+    </section>
+    <section class="card table-card"><div class="table-toolbar"><div><span>Delivery history</span><h2>Prepared and sent notifications</h2></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Kind</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Attempts</th><th>Action</th></tr></thead><tbody>${notifications.slice(0, 100).map((row) => `<tr><td>${escapeHtml(displayDate(row.created_at) || row.created_at)}</td><td>${escapeHtml(row.kind || "Notification")}</td><td>${escapeHtml(row.recipient || "Not assigned")}</td><td>${escapeHtml(row.subject || "—")}</td><td><span class="status">${escapeHtml(row.status || row.delivery_status || "Prepared")}</span>${row.last_error ? `<small class="delivery-error">${escapeHtml(row.last_error)}</small>` : ""}</td><td>${Number(row.attempts || 0)}</td><td>${row.delivery_status === "failed" ? `<button type="button" data-retry-notification="${row.id}" ${email.enabled && email.configured ? "" : "disabled"}>Retry</button>` : "—"}</td></tr>`).join("") || `<tr><td colspan="7" class="table-empty">No local notification history yet.</td></tr>`}</tbody></table></div></section>
+  `;
+  document.querySelector("#system-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      await api("/api/settings", { method: "PUT", body: JSON.stringify(values) });
+      showToast("System settings saved and audited.");
+      await renderSystemCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#deliver-queue")?.addEventListener("click", async () => {
+    try {
+      const result = await api("/api/compliance/notifications/send", { method: "POST", body: JSON.stringify({ limit: 500 }) });
+      showToast(`Delivery run complete: ${result.sent} sent, ${result.failed} failed, ${result.skipped} skipped.`);
+      await renderSystemCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelectorAll("[data-retry-notification]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      const result = await api("/api/compliance/notifications/send", { method: "POST", body: JSON.stringify({ ids: [Number(button.dataset.retryNotification)], limit: 1 }) });
+      showToast(result.sent ? "Notification delivered." : `Retry completed: ${result.failed} failed, ${result.skipped} skipped.`);
+      await renderSystemCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  }));
+  document.querySelector("#run-retention")?.addEventListener("click", async () => {
+    if (!window.confirm("Remove only expired local notifications, sessions and reset tokens? Imported customer records will not be touched.")) return;
+    try {
+      const result = await api("/api/system/retention-cleanup", { method: "POST", body: JSON.stringify({ confirmation: "PURGE_LOCAL_EXPIRED_DATA" }) });
+      showToast(`Retention complete. ${result.local_notifications} local notification records removed; 0 protected records removed.`);
+      await renderSystemCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+}
+
 async function renderComplianceCentre(days = 30) {
-  const [result, notificationResult] = await Promise.all([
+  const [result, notificationResult, configuration] = await Promise.all([
     api(`/api/compliance/reminders?days=${days}`),
     api("/api/resources/local_notifications?limit=5000"),
+    api("/api/settings"),
   ]);
   const counts = result.counts || {};
   const rows = result.data || [];
   const notifications = (notificationResult.data || []).filter((row) => row.kind === "compliance_reminder");
+  const email = configuration.email || {};
+  const canDeliver = state.auth.user?.role === "admin" && email.enabled && email.configured;
   app.innerHTML = `
     ${pageHeader("Expiry centre", "Upcoming and overdue compliance records")}
     <section class="expiry-summary-grid">
@@ -3731,14 +3818,21 @@ async function renderComplianceCentre(days = 30) {
       <article><span>Current</span><strong>${Number(counts.current || 0).toLocaleString()}</strong><small>Beyond the window</small></article>
       <article><span>Date missing</span><strong>${Number(counts.missing_date || 0).toLocaleString()}</strong><small>Source has no parseable date</small></article>
     </section>
-    <section class="card expiry-controls"><label><span>Reminder window</span><select id="expiry-days">${[7, 14, 30, 60, 90].map((value) => `<option value="${value}" ${value === days ? "selected" : ""}>${value} days</option>`).join("")}</select></label><button class="button button-primary" id="prepare-reminders" ${canEditLocalRecords() ? "" : "disabled"}>Prepare due reminders</button><span>${notifications.length} prepared notification${notifications.length === 1 ? "" : "s"}; none sent automatically</span></section>
-    <section class="card table-card"><div class="table-scroll"><table class="data-table"><thead><tr><th>State</th><th>Category</th><th>Subject</th><th>Site</th><th>Due date</th><th>Days</th></tr></thead><tbody>${rows.map((row) => `<tr><td><span class="status expiry-${row.state.toLowerCase().replace(/\s/g, "-")}">${escapeHtml(row.state)}</span></td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.subject)}</td><td>${escapeHtml(row.site || "—")}</td><td>${escapeHtml(row.due_date)}</td><td>${Number(row.days_remaining)}</td></tr>`).join("") || `<tr><td colspan="6" class="table-empty">No dated compliance records found.</td></tr>`}</tbody></table></div></section>
+    <section class="card expiry-controls"><label><span>Reminder window</span><select id="expiry-days">${[7, 14, 30, 60, 90].map((value) => `<option value="${value}" ${value === days ? "selected" : ""}>${value} days</option>`).join("")}</select></label><button class="button button-primary" id="prepare-reminders" ${canEditLocalRecords() ? "" : "disabled"}>Prepare due reminders</button><button class="button button-secondary" id="deliver-reminders" ${canDeliver ? "" : "disabled"}>Deliver prepared email</button><span>${notifications.length} reminder notification${notifications.length === 1 ? "" : "s"} · email ${email.enabled && email.configured ? "ready" : "on hold"}</span></section>
+    <section class="card table-card"><div class="table-scroll"><table class="data-table"><thead><tr><th>State</th><th>Category</th><th>Subject</th><th>Recipient</th><th>Site</th><th>Due date</th><th>Days</th></tr></thead><tbody>${rows.map((row) => `<tr><td><span class="status expiry-${row.state.toLowerCase().replace(/\s/g, "-")}">${escapeHtml(row.state)}</span></td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.subject)}</td><td>${escapeHtml(row.recipient || "Not assigned")}</td><td>${escapeHtml(row.site || "—")}</td><td>${escapeHtml(row.due_date)}</td><td>${Number(row.days_remaining)}</td></tr>`).join("") || `<tr><td colspan="7" class="table-empty">No dated compliance records found.</td></tr>`}</tbody></table></div></section>
   `;
   document.querySelector("#expiry-days").addEventListener("change", (event) => renderComplianceCentre(Number(event.target.value)));
   document.querySelector("#prepare-reminders").addEventListener("click", async () => {
     try {
       const prepared = await api("/api/compliance/notifications/prepare", { method: "POST", body: JSON.stringify({ days }) });
-      showToast(`${prepared.created} reminder${prepared.created === 1 ? "" : "s"} prepared; no external messages sent.`);
+      showToast(`${prepared.created} reminder${prepared.created === 1 ? "" : "s"} prepared; ${prepared.duplicates || 0} duplicate${prepared.duplicates === 1 ? "" : "s"} skipped.`);
+      await renderComplianceCentre(days);
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#deliver-reminders")?.addEventListener("click", async () => {
+    try {
+      const delivery = await api("/api/compliance/notifications/send", { method: "POST", body: JSON.stringify({ limit: 500 }) });
+      showToast(`${delivery.sent} sent, ${delivery.failed} failed, ${delivery.skipped} skipped.`);
       await renderComplianceCentre(days);
     } catch (error) { showToast(error.message, "error"); }
   });
@@ -3767,6 +3861,8 @@ async function route() {
       await renderAuditLog();
     } else if (path === "/users") {
       await renderUserManagement();
+    } else if (path === "/system") {
+      await renderSystemCentre();
     } else if (path === "/local-workflows") {
       await renderPilotWorkflows();
     } else if (path === "/compliance") {

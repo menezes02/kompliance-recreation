@@ -2,6 +2,8 @@
 
 Private, containerized recreation of the Kompliance health and safety application.
 
+The current release candidate adds real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
+
 The repository contains:
 
 - the locally recreated Python web application;
@@ -32,6 +34,8 @@ python local-app/server.py
 ```
 
 Then open `http://127.0.0.1:8090/`.
+
+Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
 
 ## Docker deployment
 

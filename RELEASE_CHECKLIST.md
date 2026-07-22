@@ -18,6 +18,8 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Back up the current `production-data` volume/directory.
 - [ ] Back up `source-archive` without changing its contents.
 - [ ] Back up the current reverse-proxy configuration and Basic Auth file.
+- [ ] Create a local-data ZIP with `backup_kompliance.py` and pass `verify_kompliance_backup.py`.
+- [ ] Rehearse extraction into a new empty directory and open the restored SQLite database.
 - [ ] Verify that each backup can be listed and read before continuing.
 - [ ] Record backup locations and timestamps in the release notes.
 
@@ -26,11 +28,15 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Keep `.env`, password files, databases, logs, and local uploads out of Git.
 - [ ] Confirm `KOMPLIANCE_APP_AUTH=1` in the deployed application container.
 - [ ] Confirm HTTPS and the expected hostname.
+- [ ] Confirm `/api/health/ready` returns HTTP 200 through the deployed route.
 - [ ] Confirm container names remain `kompliance_app_example` and `kompliance_gateway_example`.
 - [ ] Confirm the application data volume is writable only where local records are stored.
 - [ ] Confirm the imported source archive is mounted read-only.
 - [ ] Create the first application administrator through the one-time setup screen.
 - [ ] Store administrator credentials in the approved password manager.
+- [ ] Record the privacy contact, retention period and approved privacy notice.
+- [ ] Keep email and scheduler disabled unless the external-service approval is recorded.
+- [ ] If approved, store SMTP secrets only in the untracked deployment environment and send one controlled test.
 
 ## Deployment
 
@@ -56,6 +62,10 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] A local certificate PDF can be generated, publicly verified, replaced, and revoked.
 - [ ] The expiry centre classifies overdue, due-soon, current, and missing-date records.
 - [ ] Reminder preparation creates local notification records and sends nothing automatically.
+- [ ] Duplicate reminder preparation does not create duplicate queue records.
+- [ ] Delivery history records attempts, sent status and safe failure detail.
+- [ ] System & privacy shows database integrity, storage and service state.
+- [ ] Retention cleanup reports zero protected records.
 - [ ] Password recovery tokens expire, work once, and revoke prior sessions.
 - [ ] Five failed logins lock the account for the configured period.
 - [ ] Audit events appear for authenticated mutations.

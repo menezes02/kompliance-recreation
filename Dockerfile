@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir --requirement /app/requirements.txt
 COPY --chown=10001:10001 local-app /app/local-app
 COPY --chown=10001:10001 examples /app/examples
 COPY --chown=10001:10001 production-data /app/production-data
+COPY --chown=10001:10001 backup_kompliance.py verify_kompliance_backup.py /app/
 
 RUN mkdir -p /app/local-app/data \
     && chown -R 10001:10001 /app
@@ -23,7 +24,7 @@ USER 10001:10001
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/health', timeout=3).read()"]
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/health/ready', timeout=3).read()"]
 
 WORKDIR /app/local-app
 
