@@ -56,7 +56,7 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Store administrator credentials in the approved password manager.
 - [ ] Record the privacy contact, retention period and approved privacy notice.
 - [ ] Keep email and scheduler disabled unless the external-service approval is recorded.
-- [ ] If approved, store SMTP secrets only in the untracked deployment environment and send one controlled test.
+- [ ] If approved, store SMTP or Gmail OAuth secrets only in the untracked deployment environment and send one controlled test.
 - [ ] Confirm worker email verification is enabled and uses the approved sender/provider.
 - [ ] Store company API tokens only in an approved secret manager; never in Git or logs.
 - [ ] Complete tenant-isolation and consent/revocation security testing before enabling multiple production companies.

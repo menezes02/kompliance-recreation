@@ -66,7 +66,7 @@ KOMPLIANCE_EMAIL_DELIVERY=0
 KOMPLIANCE_SCHEDULER=0
 ```
 
-After approval, configure the SMTP values in an untracked `.env`, test with a controlled recipient, then explicitly set both switches to `1`. Passwords must never be committed or included in screenshots or logs.
+After approval, configure either SMTP or the Gmail API OAuth values in an untracked `.env`, test with a controlled recipient, then explicitly set both switches to `1`. Gmail OAuth setup is documented in `GMAIL_OAUTH_SETUP.md` and requests only `gmail.send`. Passwords, client secrets and tokens must never be committed or included in screenshots or logs.
 
 `KOMPLIANCE_BASE_URL` must be the canonical HTTPS application origin before email is considered ready. This prevents reset links being built from an untrusted request host.
 

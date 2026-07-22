@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 deployment/htpasswd
+client_secret*.json
+gmail-oauth*.json
+oauth-client*.json
 
 # Runtime state
 local-app/data/

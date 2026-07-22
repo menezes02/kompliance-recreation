@@ -1,5 +1,9 @@
 # Kompliance Recreation
 
+Gmail delivery can use OAuth 2.0 through the Gmail API without storing the Gmail
+account password. See [GMAIL_OAUTH_SETUP.md](GMAIL_OAUTH_SETUP.md). Delivery and
+the scheduler remain fail-closed until explicitly enabled.
+
 Private, containerized recreation of the Kompliance health and safety application.
 
 The current release candidate adds a tenant-isolated Universal Worker Foundation, company QR access requests with worker-controlled field approval, supervisor workflow/inbox, routed requests, worker conversations, induction approval history, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.

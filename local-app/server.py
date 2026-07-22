@@ -20,6 +20,7 @@ import threading
 import textwrap
 import time
 import zipfile
+from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from http import HTTPStatus
@@ -28,6 +29,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from io import BytesIO
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import qrcode
 
@@ -59,6 +62,10 @@ MFA_BACKUP_CODE_COUNT = 10
 API_RATE_LIMIT_PER_MINUTE = max(int(os.environ.get("KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE", "120")), 10)
 STARTED_AT = utc_now() if "utc_now" in globals() else datetime.now(UTC).replace(microsecond=0).isoformat()
 SCHEDULER_STOP = threading.Event()
+GMAIL_OAUTH_LOCK = threading.Lock()
+GMAIL_OAUTH_CACHE = {"access_token": "", "expires_at": 0.0}
+GMAIL_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+GMAIL_SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 SCHEDULER_STATE = {
     "enabled": os.environ.get("KOMPLIANCE_SCHEDULER", "0").strip() == "1",
     "running": False,
@@ -1137,18 +1144,97 @@ def application_settings(company_id: int = 1) -> dict:
 
 
 def public_email_configuration() -> dict:
+    provider = os.environ.get("KOMPLIANCE_EMAIL_PROVIDER", "smtp").strip().lower()
+    if provider not in {"smtp", "gmail_oauth"}:
+        provider = "unsupported"
     host = os.environ.get("KOMPLIANCE_SMTP_HOST", "").strip()
     sender = os.environ.get("KOMPLIANCE_SMTP_FROM", "").strip()
     base_url = os.environ.get("KOMPLIANCE_BASE_URL", "").strip()
     enabled = os.environ.get("KOMPLIANCE_EMAIL_DELIVERY", "0").strip() == "1"
+    oauth_configured = all(
+        os.environ.get(name, "").strip()
+        for name in (
+            "KOMPLIANCE_GMAIL_CLIENT_ID",
+            "KOMPLIANCE_GMAIL_CLIENT_SECRET",
+            "KOMPLIANCE_GMAIL_REFRESH_TOKEN",
+        )
+    )
+    provider_configured = bool(host) if provider == "smtp" else oauth_configured if provider == "gmail_oauth" else False
     return {
         "enabled": enabled,
-        "configured": bool(host and sender and base_url.startswith("https://")),
+        "configured": bool(provider_configured and sender and base_url.startswith("https://")),
+        "provider": provider,
         "host_configured": bool(host),
+        "oauth_configured": oauth_configured,
         "base_url_configured": base_url.startswith("https://"),
         "sender": sender,
-        "mode": os.environ.get("KOMPLIANCE_SMTP_SECURITY", "starttls").strip().lower(),
+        "mode": (
+            "OAuth 2.0 / Gmail API"
+            if provider == "gmail_oauth"
+            else os.environ.get("KOMPLIANCE_SMTP_SECURITY", "starttls").strip().lower()
+        ),
     }
+
+
+def gmail_oauth_access_token() -> str:
+    """Return a short-lived Gmail access token without exposing long-lived credentials."""
+    now = time.monotonic()
+    with GMAIL_OAUTH_LOCK:
+        cached_token = str(GMAIL_OAUTH_CACHE.get("access_token", ""))
+        if cached_token and float(GMAIL_OAUTH_CACHE.get("expires_at", 0.0)) > now + 60:
+            return cached_token
+
+        form = urlencode(
+            {
+                "client_id": os.environ.get("KOMPLIANCE_GMAIL_CLIENT_ID", ""),
+                "client_secret": os.environ.get("KOMPLIANCE_GMAIL_CLIENT_SECRET", ""),
+                "refresh_token": os.environ.get("KOMPLIANCE_GMAIL_REFRESH_TOKEN", ""),
+                "grant_type": "refresh_token",
+            }
+        ).encode("utf-8")
+        request = Request(
+            GMAIL_TOKEN_ENDPOINT,
+            data=form,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            status = getattr(error, "code", "unavailable")
+            raise RuntimeError(f"Gmail OAuth token refresh failed (HTTP {status})") from None
+        access_token = str(payload.get("access_token", ""))
+        if not access_token:
+            raise RuntimeError("Gmail OAuth token refresh returned no access token")
+        try:
+            expires_in = max(int(payload.get("expires_in", 3600)), 120)
+        except (TypeError, ValueError):
+            expires_in = 3600
+        GMAIL_OAUTH_CACHE["access_token"] = access_token
+        GMAIL_OAUTH_CACHE["expires_at"] = now + expires_in
+        return access_token
+
+
+def send_gmail_api_message(message: EmailMessage) -> None:
+    raw_message = urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
+    request = Request(
+        GMAIL_SEND_ENDPOINT,
+        data=json.dumps({"raw": raw_message}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {gmail_oauth_access_token()}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            if not 200 <= int(getattr(response, "status", 200)) < 300:
+                raise RuntimeError("Gmail API rejected the message")
+            response.read()
+    except (HTTPError, URLError, TimeoutError) as error:
+        status = getattr(error, "code", "unavailable")
+        raise RuntimeError(f"Gmail API delivery failed (HTTP {status})") from None
 
 
 def recovery_rate_limit_allowed(limit_key: str) -> bool:
@@ -1338,7 +1424,7 @@ def send_notification_email(notification: dict) -> None:
     if not configuration["enabled"]:
         raise RuntimeError("Email delivery is disabled")
     if not configuration["configured"]:
-        raise RuntimeError("SMTP host and sender are not configured")
+        raise RuntimeError(f"{configuration['provider']} email delivery is not fully configured")
     recipient = str(notification.get("recipient", "")).strip()
     if "@" not in recipient:
         raise ValueError("A valid notification recipient is required")
@@ -1347,6 +1433,9 @@ def send_notification_email(notification: dict) -> None:
     message["To"] = recipient
     message["Subject"] = str(notification.get("subject", "Kompliance notification"))[:240]
     message.set_content(str(notification.get("message", "")))
+    if configuration["provider"] == "gmail_oauth":
+        send_gmail_api_message(message)
+        return
     host = os.environ["KOMPLIANCE_SMTP_HOST"].strip()
     port = int(os.environ.get("KOMPLIANCE_SMTP_PORT", "465" if configuration["mode"] == "ssl" else "587"))
     timeout = min(max(int(os.environ.get("KOMPLIANCE_SMTP_TIMEOUT", "15")), 3), 60)
