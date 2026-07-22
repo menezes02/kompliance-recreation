@@ -5,7 +5,7 @@ Assessment date: 22 July 2026
 ## Executive status
 
 - Current single-company customer pilot: approximately **90% complete**.
-- Full multi-company platform described in Marcelo's notes: approximately **55–60% complete**.
+- Full multi-company platform described in Marcelo's notes: approximately **65–70% complete**.
 - Production remains on hold pending pilot sign-off, release approval, backup references and a rollback commit.
 
 The current product is a secured operations clone using one authorised customer snapshot plus isolated local workflows. Marcelo's document expands this into a multi-tenant worker identity and compliance network. Those are different delivery milestones.
@@ -16,7 +16,7 @@ The current product is a secured operations clone using one authorised customer 
 |---|---:|---|---|
 | 1. Universal Worker Profile | 80% | Free self-registration, email verification/recovery, editable complete profile, worker QR/public profile, field-level company consent/revocation, tenant relationships/import, revocable audited REST API, English/Portuguese/Spanish preference architecture | Approved SMS/mobile OTP provider, camera-based QR scanner/request handshake, full translation of every company screen, formal OpenAPI/client SDK |
 | 2. Document Management | 78% | Imported libraries, PDF/image viewing/download, worker-owned categories, drag/drop multi-upload/progress, validation, preview/delete, automatic versions, expiry colours/reminders, tenant document review | Automatic expiry extraction from document content, company plant/equipment/site ownership refinements, visual version-history grouping |
-| 3. Compliance & Workflow | 48% | Forms/drafts/signatures/evidence/reports, certificate verification/revocation, expiry centre, email queue/retries, audit/roles, per-company worker-document review/approval history | Internal messaging, requests, department routing, SMS/push/preferences, induction approval/decline/comments/additional-information/history |
+| 3. Compliance & Workflow | 82% | Forms/drafts/signatures/evidence/reports, certificate verification/revocation, expiry centre, email queue/retries, audit/roles, per-company worker-document reviews, routed requests, internal worker/company conversations, induction decisions/comments/history, in-app notifications and channel/language preferences | Approved SMS/push providers, provider delivery receipts/escalations, richer supervisor queues and formal customer acceptance |
 | 4. Responsive UI | 90% | Responsive navigation, dashboards, tables, forms, document viewers, desktop/mobile workflow checks | Exhaustive tablet/device accessibility and touch acceptance across every mapped route |
 | 5. Demo Environment | 5% | Data boundaries and governance documentation | Separate fictional dataset, redacted/sample files, watermarking, automated PII scan and public-demo approval |
 | 6. Data Migration | 45% | One customer snapshot with 3,597 immutable records, preserved files/relationships and isolated tenant targets | Repeatable per-client extract-transform-import pipeline, reconciliation reports, additional authorised clients such as Grandbrind |
@@ -63,13 +63,13 @@ The current product is a secured operations clone using one authorised customer 
 
 This milestone must precede cross-company import, messaging and network adoption work.
 
-### Milestone C — Supervisor workflow and communications
+### Milestone C — Supervisor workflow and communications — implemented locally
 
-1. Department contacts and request routing.
-2. Internal conversations linked to workers/documents/forms/assets.
-3. Unread/viewed and supervisor review states.
-4. Induction approval, decline, comments, additional-information request and history.
-5. Notification preferences, then approved SMS/push provider integrations.
+1. Implemented: department contacts and automatic request routing.
+2. Implemented: worker/company conversations linked to requests; broader document/form/asset linking remains an enhancement.
+3. Implemented: unread/read notifications and supervisor review states.
+4. Implemented: induction approval, decline, comments, additional-information request and immutable history.
+5. Implemented locally: notification preferences and in-app delivery. Approved SMS/push provider integrations remain external dependencies.
 
 ### Milestone D — International product and migration
 

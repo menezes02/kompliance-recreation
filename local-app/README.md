@@ -112,6 +112,7 @@ presentation/action HTML are not stored in the snapshot.
 - Worker profiles connected to exact-match available site induction definitions without inferring completion
 - Optional application login with administrator/editor/viewer enforcement, CSRF-protected sessions and a local audit log; enabled by default in Docker
 - Controlled local workflow workspace with real imported form definitions, draft/resume, final required-field validation, signature pads, evidence attachments and complete submission PDFs
+- Tenant-scoped supervisor workflow centre with department routing, worker/company requests and conversations, induction decisions/history, in-app notifications and delivery preferences
 - Branded induction certificates with unique numbers, expiry dates, scannable verification QR codes, public status pages, replacement history and revocation
 - Expiry centre covering Safe Pass, GA1, risk-assessment and local-certificate dates, with configurable windows and local notification preparation
 - Deduplicated email queue with delivery history, retry state and an opt-in scheduler

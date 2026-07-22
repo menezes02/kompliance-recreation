@@ -17,6 +17,10 @@ already been granted.
   per field. Company access and integration output stop immediately on revocation.
 - A company import creates or refreshes only its local tenant record. It does not
   transfer ownership of the worker source profile or alter protected customer data.
+- Workflow requests, conversations, induction reviews and in-app notifications
+  are partitioned by company and authenticated worker/user identity.
+- Request and induction transition history is append-only through the application
+  API. Email, SMS and push delivery remains disabled until separately approved.
 
 ## Required approvals
 

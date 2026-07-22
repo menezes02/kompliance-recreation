@@ -2,7 +2,9 @@
 
 Private, containerized recreation of the Kompliance health and safety application.
 
-The current release candidate adds a tenant-isolated Universal Worker Foundation, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
+The current release candidate adds a tenant-isolated Universal Worker Foundation, supervisor workflow/inbox, routed requests, worker conversations, induction approval history, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
+
+See [SUPERVISOR_WORKFLOW.md](SUPERVISOR_WORKFLOW.md) for workflow states, routes and the external notification-provider boundary.
 
 The repository contains:
 

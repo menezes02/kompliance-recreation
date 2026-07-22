@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#087863">
   <title>Kompliance Worker</title>
   <link rel="icon" href="/favicon.svg">
-  <link rel="stylesheet" href="/worker-static/worker.css?v=2">
+  <link rel="stylesheet" href="/worker-static/worker.css?v=3">
 </head>
 <body>
   <header class="topbar">
@@ -53,7 +53,7 @@
 
     <section id="app-view" class="hidden">
       <div class="welcome"><div><p class="eyebrow">Worker passport</p><h1 id="worker-name">Your profile</h1><p id="worker-email"></p></div><img id="worker-qr" alt="QR code for public worker profile"></div>
-      <nav class="section-tabs" aria-label="Worker sections"><button class="section-tab active" data-section="profile" type="button">Profile</button><button class="section-tab" data-section="documents" type="button">Documents</button><button class="section-tab" data-section="sharing" type="button">Sharing & consent</button></nav>
+      <nav class="section-tabs" aria-label="Worker sections"><button class="section-tab active" data-section="profile" type="button">Profile</button><button class="section-tab" data-section="documents" type="button">Documents</button><button class="section-tab" data-section="sharing" type="button">Sharing & consent</button><button class="section-tab" data-section="inbox" type="button">Inbox & requests</button></nav>
 
       <section id="section-profile" class="panel">
         <div class="panel-heading"><div><p class="eyebrow">Identity</p><h2>Worker profile</h2></div><span class="privacy-pill">You control this data</span></div>
@@ -87,9 +87,21 @@
         <form id="share-form" class="stack share-form"><label>Company<select name="company_id" id="company-select" required></select></label><fieldset><legend>Choose what this company can see</legend><div id="share-fields" class="checks"></div></fieldset><button class="primary" type="submit">Grant or update access</button></form>
         <div id="shares-list" class="cards"></div>
       </section>
+
+      <section id="section-inbox" class="panel hidden">
+        <div class="panel-heading"><div><p class="eyebrow">Communication</p><h2>Inbox & requests</h2></div><span id="worker-unread" class="privacy-pill">0 unread</span></div>
+        <div class="inbox-grid">
+          <article class="inbox-card"><h3>Create a request</h3><p class="meta">Your request is routed to the selected company department.</p><form id="worker-request-form" class="stack"><label>Company<select name="company_id" id="request-company" required></select></label><label>Department<select name="department" id="request-department" required></select></label><label>Request type<select name="request_type" id="request-type" required></select></label><label>Subject<input name="subject" maxlength="180" required></label><label>Message<textarea name="message" maxlength="4000" required></textarea></label><button class="primary">Send request</button></form></article>
+          <article class="inbox-card"><h3>Notifications</h3><div id="worker-notifications" class="cards compact-cards"></div></article>
+          <article class="inbox-card wide"><h3>My requests</h3><div id="worker-requests" class="cards compact-cards"></div></article>
+          <article class="inbox-card wide"><h3>Conversations</h3><div id="worker-conversations" class="cards compact-cards"></div></article>
+          <article class="inbox-card"><h3>Induction approvals</h3><div id="worker-inductions" class="cards compact-cards"></div></article>
+          <article class="inbox-card"><h3>Notification preferences</h3><p class="meta">Provider-backed channels remain unavailable until approved and configured.</p><form id="worker-preferences-form" class="stack"><div id="worker-preference-channels" class="checks"></div><label>Language<select name="preferred_language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label><button class="primary">Save preferences</button></form></article>
+        </div>
+      </section>
     </section>
   </main>
   <footer><a href="/privacy">Privacy</a><span>Worker data is shared only with consent.</span></footer>
-  <script src="/worker-static/worker.js?v=2" defer></script>
+  <script src="/worker-static/worker.js?v=3" defer></script>
 </body>
 </html>

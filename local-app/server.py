@@ -77,6 +77,13 @@ WORKER_SHARE_FIELDS = {
     "name", "email", "phone", "trade", "skills", "qualifications", "certifications",
     "training_records", "inductions", "employment_history", "documents",
 }
+WORKFLOW_DEPARTMENTS = {"Safety", "HR", "Plant", "Training", "Administration"}
+WORKFLOW_REQUEST_TYPES = {
+    "New Inspection", "Certificate Renewal", "Approval", "Missing Documents",
+    "Additional Information", "Equipment Inspection", "Plant Inspection", "Other",
+}
+WORKFLOW_STATUSES = {"open", "in_progress", "awaiting_information", "resolved", "closed"}
+INDUCTION_REVIEW_STATUSES = {"pending", "approved", "declined", "information_requested"}
 
 
 SEED_RECORDS = {
@@ -461,6 +468,171 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS department_contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                department TEXT NOT NULL,
+                name TEXT NOT NULL,
+                email TEXT,
+                phone TEXT,
+                user_id INTEGER,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                worker_id INTEGER,
+                created_by_user_id INTEGER,
+                created_by_worker_id INTEGER,
+                department TEXT NOT NULL,
+                request_type TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                message TEXT NOT NULL,
+                related_resource TEXT,
+                related_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'open',
+                priority TEXT NOT NULL DEFAULT 'normal',
+                assigned_contact_id INTEGER,
+                due_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE SET NULL,
+                FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY(created_by_worker_id) REFERENCES worker_accounts(id) ON DELETE SET NULL,
+                FOREIGN KEY(assigned_contact_id) REFERENCES department_contacts(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_request_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                actor_type TEXT NOT NULL,
+                actor_id INTEGER,
+                event_type TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(request_id) REFERENCES workflow_requests(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                worker_id INTEGER NOT NULL,
+                request_id INTEGER,
+                subject TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE,
+                FOREIGN KEY(request_id) REFERENCES workflow_requests(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                sender_type TEXT NOT NULL,
+                sender_user_id INTEGER,
+                sender_worker_id INTEGER,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES workflow_conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(sender_user_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY(sender_worker_id) REFERENCES worker_accounts(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS induction_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                worker_id INTEGER NOT NULL,
+                induction_name TEXT NOT NULL,
+                site TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                comments TEXT,
+                reviewer_id INTEGER,
+                reviewed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE,
+                FOREIGN KEY(reviewer_id) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS induction_review_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                review_id INTEGER NOT NULL,
+                actor_type TEXT NOT NULL,
+                actor_id INTEGER,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                comments TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(review_id) REFERENCES induction_reviews(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS in_app_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                recipient_type TEXT NOT NULL,
+                recipient_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                link TEXT,
+                read_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_preferences (
+                owner_type TEXT NOT NULL,
+                owner_id INTEGER NOT NULL,
+                in_app INTEGER NOT NULL DEFAULT 1,
+                email INTEGER NOT NULL DEFAULT 0,
+                sms INTEGER NOT NULL DEFAULT 0,
+                push INTEGER NOT NULL DEFAULT 0,
+                preferred_language TEXT NOT NULL DEFAULT 'en',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_type, owner_id)
+            )
+            """
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_requests_company_status ON workflow_requests(company_id, status)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_conversations_company_worker ON workflow_conversations(company_id, worker_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON in_app_notifications(recipient_type, recipient_id, read_at)")
         for key, value in DEFAULT_SETTINGS.items():
             connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)",
@@ -1356,6 +1528,23 @@ def shared_worker_projection(connection, access_row) -> dict:
         "visible_fields": sorted(visible),
         "profile": projected,
     }
+
+
+def create_in_app_notification(connection, company_id: int, recipient_type: str, recipient_id: int, kind: str, title: str, message: str, link: str = "") -> int:
+    cursor = connection.execute(
+        """INSERT INTO in_app_notifications(company_id, recipient_type, recipient_id, kind, title, message, link, read_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+        (company_id, recipient_type, recipient_id, kind, title[:180], message[:1000], link[:500], utc_now()),
+    )
+    return int(cursor.lastrowid)
+
+
+def notify_company_workflow_users(connection, company_id: int, kind: str, title: str, message: str, link: str = "", contact_user_id=None) -> list[int]:
+    if contact_user_id:
+        recipients = connection.execute("SELECT id FROM users WHERE id = ? AND company_id = ? AND active = 1", (contact_user_id, company_id)).fetchall()
+    else:
+        recipients = connection.execute("SELECT id FROM users WHERE company_id = ? AND active = 1 AND role IN ('admin', 'editor')", (company_id,)).fetchall()
+    return [create_in_app_notification(connection, company_id, "user", int(row["id"]), kind, title, message, link) for row in recipients]
 
 
 class KomplianceHandler(BaseHTTPRequestHandler):
@@ -2657,6 +2846,385 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         else:
             self.send_json(payload)
 
+    def workflow_request_payload(self, connection, row) -> dict:
+        item = dict(row)
+        events = connection.execute("SELECT * FROM workflow_request_events WHERE request_id = ? ORDER BY id", (row["id"],)).fetchall()
+        item["events"] = [dict(event) for event in events]
+        return item
+
+    def conversation_payload(self, connection, row) -> dict:
+        item = dict(row)
+        messages = connection.execute(
+            """SELECT workflow_messages.*, users.name AS sender_user_name,
+                      worker_profiles.payload AS sender_worker_profile
+               FROM workflow_messages
+               LEFT JOIN users ON users.id = workflow_messages.sender_user_id
+               LEFT JOIN worker_profiles ON worker_profiles.worker_id = workflow_messages.sender_worker_id
+               WHERE workflow_messages.conversation_id = ? ORDER BY workflow_messages.id""",
+            (row["id"],),
+        ).fetchall()
+        item["messages"] = []
+        for message in messages:
+            value = dict(message)
+            worker_profile = value.pop("sender_worker_profile", None)
+            user_name = value.pop("sender_user_name", None)
+            if worker_profile:
+                value["sender_name"] = json.loads(message["sender_worker_profile"]).get("name", "Worker")
+            else:
+                value["sender_name"] = user_name or "Company team"
+            item["messages"].append(value)
+        return item
+
+    def handle_departments_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT * FROM department_contacts WHERE company_id = ? ORDER BY department, name", (user["company_id"],)).fetchall()
+        self.send_json({"data": [dict(row) for row in rows], "departments": sorted(WORKFLOW_DEPARTMENTS)})
+
+    def handle_department_create(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        department = str(payload.get("department", "")).strip()
+        name = str(payload.get("name", "")).strip()
+        email = str(payload.get("email", "")).strip().lower()
+        phone = str(payload.get("phone", "")).strip()
+        user_id = int(payload["user_id"]) if str(payload.get("user_id", "")).isdigit() else None
+        if department not in WORKFLOW_DEPARTMENTS or not name or (email and "@" not in email):
+            self.send_json({"error": "A valid department, contact name and optional email are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            if user_id and connection.execute("SELECT id FROM users WHERE id = ? AND company_id = ? AND active = 1", (user_id, user["company_id"])).fetchone() is None:
+                self.send_json({"error": "The linked user is not active in this company."}, HTTPStatus.BAD_REQUEST)
+                return
+            cursor = connection.execute(
+                "INSERT INTO department_contacts(company_id, department, name, email, phone, user_id, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (user["company_id"], department, name, email or None, phone or None, user_id, now, now),
+            )
+            connection.commit()
+        self.write_audit(user, "department_contact_created", "department_contacts", cursor.lastrowid, f"{department}: {name}")
+        self.send_json({"id": cursor.lastrowid, "department": department, "name": name, "email": email, "phone": phone, "user_id": user_id, "active": 1}, HTTPStatus.CREATED)
+
+    def handle_department_update(self, user, contact_id: int) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        active = 1 if bool(payload.get("active", True)) else 0
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute("UPDATE department_contacts SET active = ?, updated_at = ? WHERE id = ? AND company_id = ?", (active, utc_now(), contact_id, user["company_id"]))
+            connection.commit()
+        if not cursor.rowcount:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.write_audit(user, "department_contact_updated", "department_contacts", contact_id, "Activated" if active else "Deactivated")
+        self.send_json({"id": contact_id, "active": active})
+
+    def handle_company_requests_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT workflow_requests.*, department_contacts.name AS assigned_contact_name,
+                          worker_profiles.payload AS worker_profile
+                   FROM workflow_requests
+                   LEFT JOIN department_contacts ON department_contacts.id = workflow_requests.assigned_contact_id
+                   LEFT JOIN worker_profiles ON worker_profiles.worker_id = workflow_requests.worker_id
+                   WHERE workflow_requests.company_id = ? ORDER BY workflow_requests.id DESC""",
+                (user["company_id"],),
+            ).fetchall()
+            data = []
+            for row in rows:
+                item = self.workflow_request_payload(connection, row)
+                worker_profile = item.pop("worker_profile", None)
+                item["worker_name"] = json.loads(worker_profile).get("name", "") if worker_profile else ""
+                data.append(item)
+        self.send_json({"data": data, "departments": sorted(WORKFLOW_DEPARTMENTS), "request_types": sorted(WORKFLOW_REQUEST_TYPES), "statuses": sorted(WORKFLOW_STATUSES)})
+
+    def handle_company_request_create(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        company_id = int(user["company_id"])
+        worker_id = int(payload["worker_id"]) if str(payload.get("worker_id", "")).isdigit() else None
+        department = str(payload.get("department", "")).strip()
+        request_type = str(payload.get("request_type", "")).strip()
+        subject = str(payload.get("subject", "")).strip()[:180]
+        message = str(payload.get("message", "")).strip()[:4000]
+        priority = str(payload.get("priority", "normal")).strip().lower()
+        due_date = str(payload.get("due_date", "")).strip() or None
+        if department not in WORKFLOW_DEPARTMENTS or request_type not in WORKFLOW_REQUEST_TYPES or not subject or not message or priority not in {"low", "normal", "high", "urgent"}:
+            self.send_json({"error": "Department, request type, subject, message and valid priority are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        if due_date and parse_record_date(due_date) is None:
+            self.send_json({"error": "Due date is invalid."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            if worker_id and connection.execute("SELECT id FROM worker_company_access WHERE company_id = ? AND worker_id = ? AND status = 'active'", (company_id, worker_id)).fetchone() is None:
+                self.send_json({"error": "The worker has not granted this company access."}, HTTPStatus.FORBIDDEN)
+                return
+            contact = connection.execute("SELECT * FROM department_contacts WHERE company_id = ? AND department = ? AND active = 1 ORDER BY id LIMIT 1", (company_id, department)).fetchone()
+            cursor = connection.execute(
+                """INSERT INTO workflow_requests(company_id, worker_id, created_by_user_id, department, request_type, subject, message, related_resource, related_id, status, priority, assigned_contact_id, due_date, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)""",
+                (company_id, worker_id, user["id"] or None, department, request_type, subject, message, str(payload.get("related_resource", ""))[:80] or None, int(payload["related_id"]) if str(payload.get("related_id", "")).isdigit() else None, priority, contact["id"] if contact else None, due_date, now, now),
+            )
+            request_id = cursor.lastrowid
+            connection.execute("INSERT INTO workflow_request_events(request_id, actor_type, actor_id, event_type, to_status, note, created_at) VALUES (?, 'user', ?, 'created', 'open', ?, ?)", (request_id, user["id"] or None, message, now))
+            if worker_id:
+                conversation = connection.execute("INSERT INTO workflow_conversations(company_id, worker_id, request_id, subject, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'open', ?, ?)", (company_id, worker_id, request_id, subject, now, now))
+                connection.execute("INSERT INTO workflow_messages(conversation_id, sender_type, sender_user_id, message, created_at) VALUES (?, 'user', ?, ?, ?)", (conversation.lastrowid, user["id"] or None, message, now))
+                create_in_app_notification(connection, company_id, "worker", worker_id, "workflow_request", subject, message, "/worker/#inbox")
+            notify_company_workflow_users(connection, company_id, "workflow_request", subject, message, "/workflow-centre", contact["user_id"] if contact else None)
+            connection.commit()
+        self.write_audit(user, "workflow_request_created", "workflow_requests", request_id, subject)
+        self.send_json({"id": request_id, "status": "open", "assigned_contact_id": contact["id"] if contact else None}, HTTPStatus.CREATED)
+
+    def handle_worker_requests_get(self, worker) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT workflow_requests.*, companies.name AS company_name, department_contacts.name AS assigned_contact_name
+                   FROM workflow_requests JOIN companies ON companies.id = workflow_requests.company_id
+                   LEFT JOIN department_contacts ON department_contacts.id = workflow_requests.assigned_contact_id
+                   WHERE workflow_requests.worker_id = ? ORDER BY workflow_requests.id DESC""",
+                (worker["id"],),
+            ).fetchall()
+            data = [self.workflow_request_payload(connection, row) for row in rows]
+        self.send_json({"data": data, "departments": sorted(WORKFLOW_DEPARTMENTS), "request_types": sorted(WORKFLOW_REQUEST_TYPES)})
+
+    def handle_worker_request_create(self, worker) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        company_id = int(payload["company_id"]) if str(payload.get("company_id", "")).isdigit() else 0
+        department = str(payload.get("department", "")).strip()
+        request_type = str(payload.get("request_type", "")).strip()
+        subject = str(payload.get("subject", "")).strip()[:180]
+        message = str(payload.get("message", "")).strip()[:4000]
+        if not company_id or department not in WORKFLOW_DEPARTMENTS or request_type not in WORKFLOW_REQUEST_TYPES or not subject or not message:
+            self.send_json({"error": "Company, department, request type, subject and message are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            access = connection.execute("SELECT id FROM worker_company_access WHERE company_id = ? AND worker_id = ? AND status = 'active'", (company_id, worker["id"])).fetchone()
+            if access is None:
+                self.send_json({"error": "Share your profile with this company before creating a request."}, HTTPStatus.FORBIDDEN)
+                return
+            contact = connection.execute("SELECT * FROM department_contacts WHERE company_id = ? AND department = ? AND active = 1 ORDER BY id LIMIT 1", (company_id, department)).fetchone()
+            cursor = connection.execute(
+                """INSERT INTO workflow_requests(company_id, worker_id, created_by_worker_id, department, request_type, subject, message, status, priority, assigned_contact_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 'normal', ?, ?, ?)""",
+                (company_id, worker["id"], worker["id"], department, request_type, subject, message, contact["id"] if contact else None, now, now),
+            )
+            request_id = cursor.lastrowid
+            connection.execute("INSERT INTO workflow_request_events(request_id, actor_type, actor_id, event_type, to_status, note, created_at) VALUES (?, 'worker', ?, 'created', 'open', ?, ?)", (request_id, worker["id"], message, now))
+            conversation = connection.execute("INSERT INTO workflow_conversations(company_id, worker_id, request_id, subject, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'open', ?, ?)", (company_id, worker["id"], request_id, subject, now, now))
+            connection.execute("INSERT INTO workflow_messages(conversation_id, sender_type, sender_worker_id, message, created_at) VALUES (?, 'worker', ?, ?, ?)", (conversation.lastrowid, worker["id"], message, now))
+            notify_company_workflow_users(connection, company_id, "worker_request", subject, message, "/workflow-centre", contact["user_id"] if contact else None)
+            connection.commit()
+        self.send_json({"id": request_id, "status": "open"}, HTTPStatus.CREATED)
+
+    def handle_company_request_status(self, user, request_id: int) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        status = str(payload.get("status", "")).strip().lower()
+        note = str(payload.get("note", "")).strip()[:2000]
+        if status not in WORKFLOW_STATUSES:
+            self.send_json({"error": "Invalid workflow status."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT * FROM workflow_requests WHERE id = ? AND company_id = ?", (request_id, user["company_id"])).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            connection.execute("UPDATE workflow_requests SET status = ?, updated_at = ? WHERE id = ?", (status, now, request_id))
+            connection.execute("INSERT INTO workflow_request_events(request_id, actor_type, actor_id, event_type, from_status, to_status, note, created_at) VALUES (?, 'user', ?, 'status_changed', ?, ?, ?, ?)", (request_id, user["id"] or None, row["status"], status, note, now))
+            if row["worker_id"]:
+                create_in_app_notification(connection, user["company_id"], "worker", row["worker_id"], "request_status", row["subject"], f"Status changed to {status.replace('_', ' ')}. {note}".strip(), "/worker/#inbox")
+            connection.commit()
+        self.write_audit(user, "workflow_request_status", "workflow_requests", request_id, f"{row['status']} → {status}")
+        self.send_json({"id": request_id, "status": status, "updated_at": now})
+
+    def handle_company_conversations_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT workflow_conversations.*, worker_profiles.payload AS worker_profile
+                   FROM workflow_conversations JOIN worker_profiles ON worker_profiles.worker_id = workflow_conversations.worker_id
+                   WHERE workflow_conversations.company_id = ? ORDER BY workflow_conversations.updated_at DESC""",
+                (user["company_id"],),
+            ).fetchall()
+            data = []
+            for row in rows:
+                item = self.conversation_payload(connection, row)
+                item["worker_name"] = json.loads(item.pop("worker_profile")).get("name", "Worker")
+                data.append(item)
+        self.send_json({"data": data})
+
+    def handle_worker_conversations_get(self, worker) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT workflow_conversations.*, companies.name AS company_name FROM workflow_conversations JOIN companies ON companies.id = workflow_conversations.company_id WHERE worker_id = ? ORDER BY workflow_conversations.updated_at DESC", (worker["id"],)).fetchall()
+            data = [self.conversation_payload(connection, row) for row in rows]
+        self.send_json({"data": data})
+
+    def handle_conversation_message(self, actor, conversation_id: int, actor_type: str) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        message = str(payload.get("message", "")).strip()[:4000]
+        if not message:
+            self.send_json({"error": "Message is required."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            if actor_type == "user":
+                row = connection.execute("SELECT * FROM workflow_conversations WHERE id = ? AND company_id = ?", (conversation_id, actor["company_id"])).fetchone()
+            else:
+                row = connection.execute("SELECT * FROM workflow_conversations WHERE id = ? AND worker_id = ?", (conversation_id, actor["id"])).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            cursor = connection.execute(
+                "INSERT INTO workflow_messages(conversation_id, sender_type, sender_user_id, sender_worker_id, message, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (conversation_id, actor_type, actor["id"] if actor_type == "user" and actor["id"] else None, actor["id"] if actor_type == "worker" else None, message, now),
+            )
+            connection.execute("UPDATE workflow_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            if actor_type == "user":
+                create_in_app_notification(connection, row["company_id"], "worker", row["worker_id"], "message", row["subject"], message, "/worker/#inbox")
+            else:
+                notify_company_workflow_users(connection, row["company_id"], "message", row["subject"], message, "/workflow-centre")
+            connection.commit()
+        if actor_type == "user":
+            self.write_audit(actor, "workflow_message_sent", "workflow_conversations", conversation_id, row["subject"])
+        self.send_json({"id": cursor.lastrowid, "conversation_id": conversation_id, "message": message, "created_at": now}, HTTPStatus.CREATED)
+
+    def handle_company_inductions_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT induction_reviews.*, worker_profiles.payload AS worker_profile, users.name AS reviewer_name
+                   FROM induction_reviews JOIN worker_profiles ON worker_profiles.worker_id = induction_reviews.worker_id
+                   LEFT JOIN users ON users.id = induction_reviews.reviewer_id
+                   WHERE induction_reviews.company_id = ? ORDER BY induction_reviews.id DESC""",
+                (user["company_id"],),
+            ).fetchall()
+            data = []
+            for row in rows:
+                item = dict(row)
+                item["worker_name"] = json.loads(item.pop("worker_profile")).get("name", "Worker")
+                events = connection.execute("SELECT * FROM induction_review_events WHERE review_id = ? ORDER BY id", (row["id"],)).fetchall()
+                item["events"] = [dict(event) for event in events]
+                data.append(item)
+        self.send_json({"data": data, "statuses": sorted(INDUCTION_REVIEW_STATUSES)})
+
+    def handle_worker_inductions_get(self, worker) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT induction_reviews.*, companies.name AS company_name, users.name AS reviewer_name FROM induction_reviews JOIN companies ON companies.id = induction_reviews.company_id LEFT JOIN users ON users.id = induction_reviews.reviewer_id WHERE worker_id = ? ORDER BY induction_reviews.id DESC", (worker["id"],)).fetchall()
+            data = []
+            for row in rows:
+                item = dict(row)
+                events = connection.execute("SELECT * FROM induction_review_events WHERE review_id = ? ORDER BY id", (row["id"],)).fetchall()
+                item["events"] = [dict(event) for event in events]
+                data.append(item)
+        self.send_json({"data": data})
+
+    def handle_company_induction_create(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        worker_id = int(payload["worker_id"]) if str(payload.get("worker_id", "")).isdigit() else 0
+        induction = str(payload.get("induction_name", "")).strip()[:180]
+        site = str(payload.get("site", "")).strip()[:180]
+        if not worker_id or not induction:
+            self.send_json({"error": "Worker and induction name are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            if connection.execute("SELECT id FROM worker_company_access WHERE company_id = ? AND worker_id = ? AND status = 'active'", (user["company_id"], worker_id)).fetchone() is None:
+                self.send_json({"error": "The worker has not granted this company access."}, HTTPStatus.FORBIDDEN)
+                return
+            cursor = connection.execute("INSERT INTO induction_reviews(company_id, worker_id, induction_name, site, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)", (user["company_id"], worker_id, induction, site or None, now, now))
+            connection.execute("INSERT INTO induction_review_events(review_id, actor_type, actor_id, to_status, comments, created_at) VALUES (?, 'user', ?, 'pending', ?, ?)", (cursor.lastrowid, user["id"] or None, "Submitted for supervisor review", now))
+            create_in_app_notification(connection, user["company_id"], "worker", worker_id, "induction_review", induction, f"Induction submitted for supervisor review at {site or 'the assigned site'}.", "/worker/#inbox")
+            connection.commit()
+        self.write_audit(user, "induction_review_created", "induction_reviews", cursor.lastrowid, induction)
+        self.send_json({"id": cursor.lastrowid, "status": "pending"}, HTTPStatus.CREATED)
+
+    def handle_company_induction_status(self, user, review_id: int) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        status = str(payload.get("status", "")).strip().lower()
+        comments = str(payload.get("comments", "")).strip()[:2000]
+        if status not in INDUCTION_REVIEW_STATUSES - {"pending"}:
+            self.send_json({"error": "Status must be approved, declined or information_requested."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT * FROM induction_reviews WHERE id = ? AND company_id = ?", (review_id, user["company_id"])).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            connection.execute("UPDATE induction_reviews SET status = ?, comments = ?, reviewer_id = ?, reviewed_at = ?, updated_at = ? WHERE id = ?", (status, comments or None, user["id"] or None, now, now, review_id))
+            connection.execute("INSERT INTO induction_review_events(review_id, actor_type, actor_id, from_status, to_status, comments, created_at) VALUES (?, 'user', ?, ?, ?, ?, ?)", (review_id, user["id"] or None, row["status"], status, comments or None, now))
+            create_in_app_notification(connection, user["company_id"], "worker", row["worker_id"], "induction_status", row["induction_name"], f"Induction {status.replace('_', ' ')}. {comments}".strip(), "/worker/#inbox")
+            connection.commit()
+        self.write_audit(user, "induction_review_status", "induction_reviews", review_id, status)
+        self.send_json({"id": review_id, "status": status, "comments": comments, "reviewed_at": now})
+
+    def handle_notifications_get(self, actor, recipient_type: str) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT * FROM in_app_notifications WHERE recipient_type = ? AND recipient_id = ? ORDER BY id DESC LIMIT 250", (recipient_type, actor["id"])).fetchall()
+        self.send_json({"data": [dict(row) for row in rows], "unread": sum(1 for row in rows if not row["read_at"])})
+
+    def handle_notification_read(self, actor, recipient_type: str, notification_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute("UPDATE in_app_notifications SET read_at = COALESCE(read_at, ?) WHERE id = ? AND recipient_type = ? AND recipient_id = ?", (utc_now(), notification_id, recipient_type, actor["id"]))
+            connection.commit()
+        if not cursor.rowcount:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_json({"id": notification_id, "read": True})
+
+    def handle_preferences_get(self, actor, owner_type: str) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT * FROM notification_preferences WHERE owner_type = ? AND owner_id = ?", (owner_type, actor["id"])).fetchone()
+        preferences = dict(row) if row else {"owner_type": owner_type, "owner_id": actor["id"], "in_app": 1, "email": 0, "sms": 0, "push": 0, "preferred_language": "en"}
+        email = public_email_configuration()
+        self.send_json({"preferences": preferences, "channels": {"in_app": {"available": True}, "email": {"available": bool(email["enabled"] and email["configured"])}, "sms": {"available": False, "reason": "Provider approval and configuration required"}, "push": {"available": False, "reason": "Provider approval and configuration required"}}})
+
+    def handle_preferences_update(self, actor, owner_type: str) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        language = str(payload.get("preferred_language", "en"))
+        if language not in {"en", "pt", "es"}:
+            self.send_json({"error": "Preferred language must be en, pt or es."}, HTTPStatus.BAD_REQUEST)
+            return
+        values = [1 if bool(payload.get(channel, channel == "in_app")) else 0 for channel in ("in_app", "email", "sms", "push")]
+        with DB_LOCK, connect_database() as connection:
+            connection.execute("""INSERT INTO notification_preferences(owner_type, owner_id, in_app, email, sms, push, preferred_language, updated_at)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  ON CONFLICT(owner_type, owner_id) DO UPDATE SET in_app=excluded.in_app, email=excluded.email, sms=excluded.sms, push=excluded.push, preferred_language=excluded.preferred_language, updated_at=excluded.updated_at""", (owner_type, actor["id"], *values, language, utc_now()))
+            connection.commit()
+        self.send_json({"updated": True, "in_app": values[0], "email": values[1], "sms": values[2], "push": values[3], "preferred_language": language})
+
     def handle_audit(self, query: str) -> None:
         user = self.require_user({"admin"})
         if user is None:
@@ -3379,6 +3947,21 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if path == "/api/worker/shares":
                 self.handle_worker_shares_get(worker)
                 return
+            if path == "/api/worker/requests":
+                self.handle_worker_requests_get(worker)
+                return
+            if path == "/api/worker/conversations":
+                self.handle_worker_conversations_get(worker)
+                return
+            if path == "/api/worker/induction-reviews":
+                self.handle_worker_inductions_get(worker)
+                return
+            if path == "/api/worker/notifications":
+                self.handle_notifications_get(worker, "worker")
+                return
+            if path == "/api/worker/preferences":
+                self.handle_preferences_get(worker, "worker")
+                return
             if path == "/api/worker/qr":
                 self.handle_worker_qr(worker)
                 return
@@ -3427,6 +4010,24 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/company/api-tokens":
             self.handle_company_api_tokens_get(self.request_user)
+            return
+        if path == "/api/company/departments":
+            self.handle_departments_get(self.request_user)
+            return
+        if path == "/api/company/requests":
+            self.handle_company_requests_get(self.request_user)
+            return
+        if path == "/api/company/conversations":
+            self.handle_company_conversations_get(self.request_user)
+            return
+        if path == "/api/company/induction-reviews":
+            self.handle_company_inductions_get(self.request_user)
+            return
+        if path == "/api/company/notifications":
+            self.handle_notifications_get(self.request_user, "user")
+            return
+        if path == "/api/company/preferences":
+            self.handle_preferences_get(self.request_user, "user")
             return
         company_document = path.strip("/").split("/")
         if len(company_document) == 5 and company_document[:3] == ["api", "company", "worker-documents"] and company_document[3].isdigit() and company_document[4] == "file":
@@ -3516,9 +4117,29 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/worker/shares":
                 self.handle_worker_share_create(worker)
                 return
+            if parsed.path == "/api/worker/requests":
+                self.handle_worker_request_create(worker)
+                return
+            worker_workflow = parsed.path.strip("/").split("/")
+            if len(worker_workflow) == 5 and worker_workflow[:3] == ["api", "worker", "conversations"] and worker_workflow[3].isdigit() and worker_workflow[4] == "messages":
+                self.handle_conversation_message(worker, int(worker_workflow[3]), "worker")
+                return
+            if len(worker_workflow) == 5 and worker_workflow[:3] == ["api", "worker", "notifications"] and worker_workflow[3].isdigit() and worker_workflow[4] == "read":
+                self.handle_notification_read(worker, "worker", int(worker_workflow[3]))
+                return
             share_parts = parsed.path.strip("/").split("/")
             if len(share_parts) == 5 and share_parts[:3] == ["api", "worker", "shares"] and share_parts[3].isdigit() and share_parts[4] == "revoke":
                 self.handle_worker_share_revoke(worker, int(share_parts[3]))
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if parsed.path.startswith("/api/company/notifications/"):
+            notification_user = self.require_user()
+            if notification_user is None or not self.require_csrf(notification_user):
+                return
+            notification_parts = parsed.path.strip("/").split("/")
+            if len(notification_parts) == 5 and notification_parts[:3] == ["api", "company", "notifications"] and notification_parts[3].isdigit() and notification_parts[4] == "read":
+                self.handle_notification_read(notification_user, "user", int(notification_parts[3]))
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -3544,7 +4165,28 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             self.handle_company_api_token_create(user)
             return
+        if parsed.path == "/api/company/departments":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_department_create(user)
+            return
+        if parsed.path == "/api/company/requests":
+            self.handle_company_request_create(user)
+            return
+        if parsed.path == "/api/company/induction-reviews":
+            self.handle_company_induction_create(user)
+            return
         company_parts = parsed.path.strip("/").split("/")
+        if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "requests"] and company_parts[3].isdigit() and company_parts[4] == "status":
+            self.handle_company_request_status(user, int(company_parts[3]))
+            return
+        if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "conversations"] and company_parts[3].isdigit() and company_parts[4] == "messages":
+            self.handle_conversation_message(user, int(company_parts[3]), "user")
+            return
+        if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "induction-reviews"] and company_parts[3].isdigit() and company_parts[4] == "status":
+            self.handle_company_induction_status(user, int(company_parts[3]))
+            return
         if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "shared-workers"] and company_parts[3].isdigit() and company_parts[4] == "import":
             self.handle_company_import_worker(user, int(company_parts[3]))
             return
@@ -3619,6 +4261,16 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if worker is not None and self.require_worker_csrf(worker):
                 self.handle_worker_profile_update(worker)
             return
+        if parsed.path == "/api/worker/preferences":
+            worker = self.require_worker()
+            if worker is not None and self.require_worker_csrf(worker):
+                self.handle_preferences_update(worker, "worker")
+            return
+        if parsed.path == "/api/company/preferences":
+            preference_user = self.require_user()
+            if preference_user is not None and self.require_csrf(preference_user):
+                self.handle_preferences_update(preference_user, "user")
+            return
         user = self.require_user({"editor", "admin"})
         if user is None or not self.require_csrf(user):
             return
@@ -3635,6 +4287,13 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
                 return
             self.handle_settings_update(user)
+            return
+        department_parts = parsed.path.strip("/").split("/")
+        if len(department_parts) == 4 and department_parts[:3] == ["api", "company", "departments"] and department_parts[3].isdigit():
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_department_update(user, int(department_parts[3]))
             return
         if parsed.path.startswith("/api/resources/"):
             self.handle_resource_update(parsed.path)

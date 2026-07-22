@@ -79,6 +79,11 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Company import creates/refreshes only its local tenant worker record.
 - [ ] Tenant A cannot list Tenant B records, users, settings, files, audit events or source archive.
 - [ ] API token creation/read/revocation works and successful reads are audited.
+- [ ] Worker requests route only to an active contact in the selected tenant department.
+- [ ] Request status history and induction decision history retain every transition.
+- [ ] Company and worker conversation replies are visible only to the matching tenant and worker.
+- [ ] In-app unread/read state works for both company and worker accounts.
+- [ ] SMS and push remain unavailable until approved providers are explicitly configured.
 - [ ] `python -m unittest local-app/test_universal_workers.py -v` passes in a fresh test volume.
 - [ ] No imported source record can be edited or deleted.
 

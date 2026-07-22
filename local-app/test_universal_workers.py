@@ -188,6 +188,89 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
         )
         self.assertEqual(api.call("/api/v1/shared-workers", headers=auth_header)[0], 401)
 
+        # Supervisor workflow remains tenant-scoped from worker request to final approval.
+        status, users, _ = tenant_client.json("/api/users")
+        self.assertEqual(status, 200)
+        tenant_user_id = users["data"][0]["id"]
+        status, contact, _ = tenant_client.json(
+            "/api/company/departments", "POST",
+            {"department": "Safety", "name": "Safety Lead", "email": "tenant@test.local", "user_id": tenant_user_id},
+            tenant_csrf,
+        )
+        self.assertEqual(status, 201)
+        status, request, _ = worker.json(
+            "/api/worker/requests", "POST",
+            {"company_id": tenant["id"], "department": "Safety", "request_type": "Additional Information", "subject": "Harness evidence", "message": "Please confirm which certificate is required."},
+            worker_csrf,
+        )
+        self.assertEqual(status, 201)
+        status, company_requests, _ = tenant_client.json("/api/company/requests")
+        self.assertEqual(company_requests["data"][0]["assigned_contact_id"], contact["id"])
+        self.assertEqual(company_requests["data"][0]["worker_name"], "Aoife Worker")
+        request_id = request["id"]
+        status, changed, _ = tenant_client.json(
+            f"/api/company/requests/{request_id}/status", "POST",
+            {"status": "awaiting_information", "note": "Upload the inspection record."}, tenant_csrf,
+        )
+        self.assertEqual(changed["status"], "awaiting_information")
+        status, worker_requests, _ = worker.json("/api/worker/requests")
+        self.assertEqual(worker_requests["data"][0]["events"][-1]["to_status"], "awaiting_information")
+
+        status, company_conversations, _ = tenant_client.json("/api/company/conversations")
+        conversation_id = company_conversations["data"][0]["id"]
+        self.assertEqual(tenant_client.json(
+            f"/api/company/conversations/{conversation_id}/messages", "POST",
+            {"message": "The GA2 inspection certificate is required."}, tenant_csrf,
+        )[0], 201)
+        self.assertEqual(worker.json(
+            f"/api/worker/conversations/{conversation_id}/messages", "POST",
+            {"message": "Understood, I will provide it."}, worker_csrf,
+        )[0], 201)
+        status, conversation_after, _ = tenant_client.json("/api/company/conversations")
+        self.assertEqual(conversation_after["data"][0]["messages"][-1]["sender_name"], "Aoife Worker")
+
+        status, induction, _ = tenant_client.json(
+            "/api/company/induction-reviews", "POST",
+            {"worker_id": worker_id, "induction_name": "Oranmore Site Induction", "site": "Oranmore"}, tenant_csrf,
+        )
+        self.assertEqual(status, 201)
+        status, decision, _ = tenant_client.json(
+            f"/api/company/induction-reviews/{induction['id']}/status", "POST",
+            {"status": "approved", "comments": "Identity and training verified."}, tenant_csrf,
+        )
+        self.assertEqual(decision["status"], "approved")
+        status, worker_inductions, _ = worker.json("/api/worker/induction-reviews")
+        self.assertEqual(worker_inductions["data"][0]["status"], "approved")
+        self.assertEqual([event["to_status"] for event in worker_inductions["data"][0]["events"]], ["pending", "approved"])
+
+        status, worker_notifications, _ = worker.json("/api/worker/notifications")
+        self.assertGreater(worker_notifications["unread"], 0)
+        self.assertEqual(worker.json(
+            f"/api/worker/notifications/{worker_notifications['data'][0]['id']}/read", "POST", {}, worker_csrf,
+        )[0], 200)
+        status, company_notifications, _ = tenant_client.json("/api/company/notifications")
+        self.assertGreater(company_notifications["unread"], 0)
+        self.assertEqual(tenant_client.json(
+            f"/api/company/notifications/{company_notifications['data'][0]['id']}/read", "POST", {}, tenant_csrf,
+        )[0], 200)
+        self.assertEqual(worker.json(
+            "/api/worker/preferences", "PUT",
+            {"in_app": True, "email": True, "sms": False, "push": False, "preferred_language": "pt"}, worker_csrf,
+        )[1]["preferred_language"], "pt")
+        status, worker_preferences, _ = worker.json("/api/worker/preferences")
+        self.assertFalse(worker_preferences["channels"]["sms"]["available"])
+        self.assertEqual(tenant_client.json(
+            "/api/company/preferences", "PUT",
+            {"in_app": True, "email": False, "sms": False, "push": False, "preferred_language": "en"}, tenant_csrf,
+        )[0], 200)
+
+        # A different tenant cannot read or mutate the workflow by guessing an ID.
+        self.assertEqual(platform.json("/api/company/requests")[1]["data"], [])
+        self.assertEqual(platform.call(
+            f"/api/company/requests/{request_id}/status", "POST",
+            json.dumps({"status": "closed"}).encode("utf-8"), setup["csrf_token"], {"Content-Type": "application/json"},
+        )[0], 404)
+
         status, root_shared, _ = platform.json("/api/company/shared-workers")
         self.assertEqual(root_shared["data"], [])
         status, shares, _ = worker.json("/api/worker/shares")
