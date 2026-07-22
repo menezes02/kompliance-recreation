@@ -59,6 +59,20 @@ def main() -> None:
             source_connection.close()
         verification_connection = sqlite3.connect(snapshot)
         try:
+            protected_ids = []
+            for record_id, payload in verification_connection.execute(
+                "SELECT id, payload FROM records"
+            ).fetchall():
+                try:
+                    record = json.loads(payload)
+                except (TypeError, json.JSONDecodeError):
+                    record = {}
+                if str(record.get("source", "")).strip().casefold() == "production read-only export":
+                    protected_ids.append((record_id,))
+            verification_connection.executemany(
+                "DELETE FROM records WHERE id = ?", protected_ids
+            )
+            verification_connection.commit()
             integrity = verification_connection.execute("PRAGMA integrity_check").fetchone()[0]
         finally:
             verification_connection.close()
@@ -78,6 +92,7 @@ def main() -> None:
             "source_archive_included": False,
             "production_snapshot_included": False,
             "database_integrity": integrity,
+            "protected_records_removed_from_copy": len(protected_ids),
             "files": [
                 {"path": archive_path, "bytes": path.stat().st_size, "sha256": sha256(path)}
                 for path, archive_path in files

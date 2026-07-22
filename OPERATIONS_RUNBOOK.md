@@ -19,7 +19,7 @@ The persistent validation volume is named `kompliance_data_example`. Do not remo
 
 ## Backup
 
-The backup contains only writable local application data. It never includes `source-archive` or `production-data`.
+The backup contains only writable local application data. It never includes `source-archive` or `production-data`, and the consistent database copy is scrubbed of cached protected snapshot rows. The live database is never changed. A restored application re-imports protected rows from its separately controlled production snapshot.
 
 ```powershell
 python backup_kompliance.py --data-root local-app/data --output C:\Backups\kompliance-local-YYYYMMDD.zip

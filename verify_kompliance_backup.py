@@ -50,17 +50,24 @@ def main() -> None:
                 integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
                 records = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0]
                 users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                protected = sum(
+                    str(json.loads(row[0]).get("source", "")).strip().casefold()
+                    == "production read-only export"
+                    for row in connection.execute("SELECT payload FROM records").fetchall()
+                )
             finally:
                 connection.close()
             if integrity != "ok":
                 raise SystemExit(f"Database integrity failed: {integrity}")
+            if protected:
+                raise SystemExit("Backup database still contains protected snapshot records")
         if args.restore_to:
             target = args.restore_to.resolve()
             target.mkdir(parents=True, exist_ok=True)
             if any(target.iterdir()):
                 raise SystemExit(f"Restore rehearsal target must be empty: {target}")
             archive.extractall(target)
-    print(json.dumps({"verified": True, "backup": str(backup), "files": len(manifest["files"]), "records": records, "users": users, "restore_target": str(args.restore_to.resolve()) if args.restore_to else None}, indent=2))
+    print(json.dumps({"verified": True, "backup": str(backup), "files": len(manifest["files"]), "records": records, "users": users, "protected_records": protected, "restore_target": str(args.restore_to.resolve()) if args.restore_to else None}, indent=2))
 
 
 if __name__ == "__main__":
