@@ -74,11 +74,15 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Audit events appear for authenticated mutations.
 - [ ] Worker registration, verification, login, recovery and logout work.
 - [ ] Worker QR/public fields reveal only the selected public profile fields.
+- [ ] QR scan and manual paste both create a pending company request without exposing private fields.
+- [ ] Worker approval can narrow the requested fields; decline and duplicate response create no access.
+- [ ] Tenant A cannot see Tenant B access requests and an active grant blocks duplicate requests.
 - [ ] A company sees only fields/documents in its active worker consent grant.
 - [ ] Worker revocation immediately blocks the secure link, company view and REST API.
 - [ ] Company import creates/refreshes only its local tenant worker record.
 - [ ] Tenant A cannot list Tenant B records, users, settings, files, audit events or source archive.
 - [ ] API token creation/read/revocation works and successful reads are audited.
+- [ ] `/api/openapi.json` is valid OpenAPI 3.1 and matches the implemented consent and bearer routes.
 - [ ] Worker requests route only to an active contact in the selected tenant department.
 - [ ] Request status history and induction decision history retain every transition.
 - [ ] Company and worker conversation replies are visible only to the matching tenant and worker.

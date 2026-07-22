@@ -7,6 +7,7 @@
   <title>Kompliance Worker</title>
   <link rel="icon" href="/favicon.svg">
   <link rel="stylesheet" href="/worker-static/worker.css?v=3">
+  <link rel="stylesheet" href="/worker-static/worker-access.css?v=1">
 </head>
 <body>
   <header class="topbar">
@@ -91,6 +92,7 @@
       <section id="section-inbox" class="panel hidden">
         <div class="panel-heading"><div><p class="eyebrow">Communication</p><h2>Inbox & requests</h2></div><span id="worker-unread" class="privacy-pill">0 unread</span></div>
         <div class="inbox-grid">
+          <article class="inbox-card wide access-approval-card"><h3>Company access requests</h3><p class="meta">You decide which requested passport fields each company may see. Declining shares nothing.</p><div id="worker-access-requests" class="cards compact-cards"></div></article>
           <article class="inbox-card"><h3>Create a request</h3><p class="meta">Your request is routed to the selected company department.</p><form id="worker-request-form" class="stack"><label>Company<select name="company_id" id="request-company" required></select></label><label>Department<select name="department" id="request-department" required></select></label><label>Request type<select name="request_type" id="request-type" required></select></label><label>Subject<input name="subject" maxlength="180" required></label><label>Message<textarea name="message" maxlength="4000" required></textarea></label><button class="primary">Send request</button></form></article>
           <article class="inbox-card"><h3>Notifications</h3><div id="worker-notifications" class="cards compact-cards"></div></article>
           <article class="inbox-card wide"><h3>My requests</h3><div id="worker-requests" class="cards compact-cards"></div></article>
@@ -102,6 +104,7 @@
     </section>
   </main>
   <footer><a href="/privacy">Privacy</a><span>Worker data is shared only with consent.</span></footer>
-  <script src="/worker-static/worker.js?v=3" defer></script>
+  <script src="/static/i18n.js?v=4" defer></script>
+  <script src="/worker-static/worker.js?v=4" defer></script>
 </body>
 </html>

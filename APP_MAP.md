@@ -25,12 +25,13 @@ source application:
 | `/worker/` | Worker registration, login, recovery and worker-owned passport |
 | `/worker/public/:token` | Minimal worker-controlled QR profile |
 | `/worker/share/:token` | Revocable company-specific consent link |
-| `/shared-workers` | Company consent inbox, document review and workforce import |
+| `/shared-workers` | QR/manual company access requests, consent history, document review and workforce import |
 | `/workflow-centre` | Routed requests, conversations, induction approvals, notifications and department contacts |
-| `/worker/#inbox` | Worker request creation, conversation replies, induction status and notifications |
+| `/worker/#inbox` | Worker access approval/decline, request creation, conversation replies, induction status and notifications |
 | `/system` | System/privacy controls, notification delivery history and authorised tenant migration history |
 | `/api/v1/shared-workers` | Bearer-token REST list for active consent grants |
 | `/api/v1/workers/:id/*` | Scoped profile, certification, training, induction and document resources |
+| `/api/openapi.json` | OpenAPI 3.1 contract for consent and integration routes |
 
 All local tenant records are isolated by `company_id`. The authorised source
 snapshot belongs only to the original customer tenant and remains immutable.

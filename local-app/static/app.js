@@ -5,6 +5,15 @@ const toastRoot = document.querySelector("#toast-root");
 const mainNav = document.querySelector("#main-nav");
 const sidebar = document.querySelector("#sidebar");
 const navOverlay = document.querySelector("#nav-overlay");
+let activeQrStream = null;
+let qrScanTimer = null;
+
+function stopQrScanner() {
+  if (qrScanTimer) window.clearTimeout(qrScanTimer);
+  qrScanTimer = null;
+  if (activeQrStream) activeQrStream.getTracks().forEach((track) => track.stop());
+  activeQrStream = null;
+}
 
 const LIST_ROUTES = {
   "/sites": {
@@ -3586,20 +3595,36 @@ function applyAuthContext() {
 
 async function renderSharedWorkers() {
   const user = state.auth.user || {};
-  const [workerResult, tokenResult, companyResult] = await Promise.all([
+  const [workerResult, requestResult, tokenResult, companyResult] = await Promise.all([
     api("/api/company/shared-workers"),
+    api("/api/company/worker-access-requests"),
     user.role === "admin" ? api("/api/company/api-tokens") : Promise.resolve({ data: [] }),
     user.role === "admin" && user.platform_admin ? api("/api/companies") : Promise.resolve({ data: [] }),
   ]);
   const workers = workerResult.data || [];
+  const accessRequests = requestResult.data || [];
   const tokens = tokenResult.data || [];
   const companies = companyResult.data || [];
+  const requestFields = requestResult.available_fields || [];
   app.innerHTML = `
-    ${pageHeader("Shared worker passports", "Worker-owned profiles and documents shared with explicit, revocable consent", `<a class="button button-secondary" href="/worker/" target="_blank" rel="noopener">Open worker portal</a>`)}
+    ${pageHeader("Shared worker passports", "Worker-owned profiles and documents shared with explicit, revocable consent", `<div class="page-header-actions"><a class="button button-secondary" href="/api/openapi.json" target="_blank" rel="noopener">API contract</a><a class="button button-secondary" href="/worker/" target="_blank" rel="noopener">Open worker portal</a></div>`)}
     <section class="universal-summary">
       <article><span>Active consent</span><strong>${workers.length}</strong><small>Workers sharing with this company</small></article>
       <article><span>Imported locally</span><strong>${workers.filter(worker => worker.imported_at).length}</strong><small>Tenant worker records created</small></article>
       <article><span>Integration tokens</span><strong>${tokens.filter(token => token.active).length}</strong><small>Revocable API credentials</small></article>
+    </section>
+    <section class="card universal-card access-request-card">
+      <div class="local-section-heading"><span>QR onboarding</span><h2>Request worker passport access</h2><p>Scan the worker's Kompliance QR or paste its link. Nothing private is shared until the worker approves individual fields.</p></div>
+      <div class="access-request-layout">
+        <form id="worker-access-request-form" class="workflow-form">
+          <label class="wide">Worker QR link or token<input id="worker-qr-value" name="qr_value" autocomplete="off" placeholder="https://.../worker/public/..." required></label>
+          <fieldset class="wide request-fieldset"><legend>Fields requested</legend><div class="request-field-grid">${requestFields.map(field => `<label><input type="checkbox" name="requested_fields" value="${escapeHtml(field)}" ${["name", "email", "phone", "trade", "certifications", "training_records", "documents"].includes(field) ? "checked" : ""}> ${escapeHtml(field.replaceAll("_", " "))}</label>`).join("")}</div></fieldset>
+          <label class="wide">Message to worker (optional)<textarea name="message" maxlength="1000" placeholder="Why your company needs this access"></textarea></label>
+          <div class="access-request-actions"><button class="button button-secondary" id="start-qr-scanner" type="button">Scan QR with camera</button><button class="button button-primary">Send access request</button></div>
+        </form>
+        <div id="qr-scanner-panel" class="qr-scanner-panel hidden"><video id="qr-scanner-video" muted playsinline></video><p id="qr-scanner-status">Point the camera at the worker QR code.</p><button id="stop-qr-scanner" class="button button-secondary button-small" type="button">Stop camera</button></div>
+      </div>
+      <div class="access-request-list"><h3>Access request history</h3>${accessRequests.length ? accessRequests.map(request => { const worker = request.worker || {}; return `<article><span><strong>${escapeHtml(worker.name || worker.trade || "Worker passport")}</strong><small>${escapeHtml(request.requested_fields.map(field => field.replaceAll("_", " ")).join(", "))}</small></span><span class="status">${escapeHtml(request.status)}</span><small>${escapeHtml(displayDate(request.responded_at || request.created_at) || request.responded_at || request.created_at)}</small></article>`; }).join("") : `<p class="table-empty">No company access requests yet.</p>`}</div>
     </section>
     <section class="card universal-card">
       <div class="table-toolbar"><div><span>Consented access</span><h2>Universal workers</h2></div></div>
@@ -3617,6 +3642,54 @@ async function renderSharedWorkers() {
     ${user.role === "admin" ? `<section class="card universal-card"><div class="local-section-heading"><span>Integration</span><h2>Company API tokens</h2><p>Create a token for read-only access to consented worker profiles. The secret is shown only once.</p></div><form id="api-token-form" class="inline-create"><input name="name" placeholder="Integration name" required><button class="button button-primary">Create token</button></form><div class="token-list">${tokens.map(token => `<div><span><strong>${escapeHtml(token.name)}</strong><small>${token.active ? "Active" : "Revoked"}${token.last_used_at ? ` · used ${escapeHtml(displayDate(token.last_used_at) || token.last_used_at)}` : ""}</small></span>${token.active ? `<button class="button button-danger" data-token-revoke="${token.id}" type="button">Revoke</button>` : ""}</div>`).join("") || `<p class="table-empty">No integration tokens.</p>`}</div></section>` : ""}
     ${user.role === "admin" && user.platform_admin ? `<section class="card universal-card"><div class="local-section-heading"><span>Platform administration</span><h2>Create an isolated company tenant</h2><p>Each tenant receives a separate administrator, records and consent boundary.</p></div><form id="company-create-form" class="tenant-form"><label>Company name<input name="name" required></label><label>Administrator name<input name="admin_name" required></label><label>Administrator email<input name="admin_email" type="email" required></label><label>Temporary password<input name="admin_password" type="password" minlength="12" required></label><button class="button button-primary">Create company</button></form><p class="tenant-count">${companies.length} tenant${companies.length === 1 ? "" : "s"} configured.</p></section>` : ""}
   `;
+  document.querySelector("#worker-access-request-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const requestedFields = [...form.querySelectorAll('[name="requested_fields"]:checked')].map(input => input.value);
+    try {
+      await api("/api/company/worker-access-requests", { method: "POST", body: JSON.stringify({ qr_value: form.elements.qr_value.value, requested_fields: requestedFields, message: form.elements.message.value }) });
+      stopQrScanner();
+      showToast("Access request sent. The worker must approve it before any private data is shared.");
+      await renderSharedWorkers();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#start-qr-scanner")?.addEventListener("click", async () => {
+    const panel = document.querySelector("#qr-scanner-panel");
+    const video = document.querySelector("#qr-scanner-video");
+    const status = document.querySelector("#qr-scanner-status");
+    if (!navigator.mediaDevices?.getUserMedia || !("BarcodeDetector" in window)) {
+      showToast("This browser cannot scan QR codes directly. Paste the worker QR link instead.", "error");
+      document.querySelector("#worker-qr-value")?.focus();
+      return;
+    }
+    try {
+      stopQrScanner();
+      activeQrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      video.srcObject = activeQrStream;
+      await video.play();
+      panel.classList.remove("hidden");
+      const detector = new BarcodeDetector({ formats: ["qr_code"] });
+      const scan = async () => {
+        if (!activeQrStream) return;
+        try {
+          const codes = await detector.detect(video);
+          if (codes[0]?.rawValue) {
+            document.querySelector("#worker-qr-value").value = codes[0].rawValue;
+            status.textContent = "QR captured. Review the requested fields, then send the request.";
+            stopQrScanner();
+            return;
+          }
+        } catch (_) { /* A frame can be unavailable while the camera warms up. */ }
+        qrScanTimer = window.setTimeout(scan, 250);
+      };
+      scan();
+    } catch (error) {
+      stopQrScanner();
+      panel.classList.add("hidden");
+      showToast(`Camera unavailable: ${error.message}. Paste the QR link instead.`, "error");
+    }
+  });
+  document.querySelector("#stop-qr-scanner")?.addEventListener("click", () => { stopQrScanner(); document.querySelector("#qr-scanner-panel")?.classList.add("hidden"); });
   document.querySelectorAll("[data-worker-import]").forEach(button => button.addEventListener("click", async () => { try { await api(`/api/company/shared-workers/${button.dataset.workerImport}/import`, { method: "POST", body: "{}" }); showToast("Worker profile imported into this tenant only."); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } }));
   document.querySelectorAll("[data-doc-review]").forEach(button => button.addEventListener("click", async () => { try { await api(`/api/company/worker-documents/${button.dataset.docReview}/review`, { method: "POST", body: JSON.stringify({ status: button.dataset.status }) }); showToast(`Document marked ${button.dataset.status}.`); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } }));
   document.querySelector("#api-token-form")?.addEventListener("submit", async event => { event.preventDefault(); try { const result = await api("/api/company/api-tokens", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); window.prompt("Copy this API token now. It will not be shown again.", result.token); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } });
@@ -3951,6 +4024,7 @@ async function renderComplianceCentre(days = 30) {
 }
 
 async function route() {
+  stopQrScanner();
   setLoading(true);
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   updateActiveNavigation(path);
@@ -4011,6 +4085,7 @@ async function route() {
 }
 
 function navigate(href) {
+  stopQrScanner();
   history.pushState({}, "", href);
   closeSidebar();
   route();

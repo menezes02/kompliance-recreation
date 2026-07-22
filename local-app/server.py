@@ -401,6 +401,26 @@ def initialize_database() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS worker_access_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                worker_id INTEGER NOT NULL,
+                requested_by_user_id INTEGER,
+                requested_fields TEXT NOT NULL,
+                message TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                response_fields TEXT,
+                responded_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE,
+                FOREIGN KEY(requested_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS worker_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 worker_id INTEGER NOT NULL,
@@ -673,6 +693,9 @@ def initialize_database() -> None:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_conversations_company_worker ON workflow_conversations(company_id, worker_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON in_app_notifications(recipient_type, recipient_id, read_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_migration_runs_company ON tenant_migration_runs(company_id, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_worker_access_requests_worker_status ON worker_access_requests(worker_id, status, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_worker_access_requests_company_status ON worker_access_requests(company_id, status, created_at)")
+        connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_access_requests_one_pending ON worker_access_requests(company_id, worker_id) WHERE status = 'pending'")
         for key, value in DEFAULT_SETTINGS.items():
             connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)",
@@ -1600,7 +1623,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
-        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)")
+        self.send_header("Permissions-Policy", "camera=(self), microphone=(), geolocation=(self)")
         if html_document:
             self.send_header(
                 "Content-Security-Policy",
@@ -1808,6 +1831,17 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (user_id, actor, action, resource, record_id, summary[:500], utc_now(), int(user.get("company_id", 1)) if user else 1),
+            )
+            connection.commit()
+
+    def write_worker_audit(self, worker, company_id: int, action: str, resource: str, record_id=None, summary="") -> None:
+        with DB_LOCK, connect_database() as connection:
+            connection.execute(
+                """
+                INSERT INTO audit_log(user_id, actor, action, resource, record_id, summary, created_at, company_id)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (worker.get("email", "worker"), action, resource, record_id, summary[:500], utc_now(), company_id),
             )
             connection.commit()
 
@@ -2453,6 +2487,182 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         self.send_json({"revoked": True, "id": access_id, "revoked_at": now})
+
+    def handle_company_access_requests_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT worker_access_requests.*, worker_profiles.payload AS profile_payload,
+                          users.name AS requested_by_name
+                   FROM worker_access_requests
+                   JOIN worker_profiles ON worker_profiles.worker_id = worker_access_requests.worker_id
+                   LEFT JOIN users ON users.id = worker_access_requests.requested_by_user_id
+                   WHERE worker_access_requests.company_id = ?
+                   ORDER BY CASE worker_access_requests.status WHEN 'pending' THEN 0 ELSE 1 END,
+                            worker_access_requests.created_at DESC""",
+                (user["company_id"],),
+            ).fetchall()
+        data = []
+        for row in rows:
+            item = dict(row)
+            profile = json.loads(item.pop("profile_payload"))
+            public_fields = set(profile.get("public_fields", ["name", "trade"])) & (WORKER_SHARE_FIELDS - {"email", "documents"})
+            item["worker"] = {
+                field: profile.get(field)
+                for field in sorted(public_fields)
+            }
+            item["requested_fields"] = json.loads(item["requested_fields"])
+            item["response_fields"] = json.loads(item["response_fields"] or "[]")
+            data.append(item)
+        self.send_json({"data": data, "available_fields": sorted(WORKER_SHARE_FIELDS)})
+
+    def handle_company_access_request_create(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        qr_value = str(payload.get("qr_value", "")).strip()
+        requested_fields = sorted(set(payload.get("requested_fields") or []) & WORKER_SHARE_FIELDS)
+        message = str(payload.get("message", "")).strip()[:1000]
+        parsed_qr = urlparse(qr_value)
+        if parsed_qr.scheme or parsed_qr.netloc:
+            parts = parsed_qr.path.strip("/").split("/")
+            public_token = parts[2] if len(parts) == 3 and parts[:2] == ["worker", "public"] else ""
+        else:
+            public_token = qr_value
+        if not public_token or len(public_token) > 200 or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for character in public_token):
+            self.send_json({"error": "Paste or scan a valid Kompliance worker QR link."}, HTTPStatus.BAD_REQUEST)
+            return
+        if not requested_fields:
+            self.send_json({"error": "Choose at least one field to request."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            worker = connection.execute(
+                """SELECT worker_accounts.id, worker_profiles.payload
+                   FROM worker_accounts JOIN worker_profiles ON worker_profiles.worker_id = worker_accounts.id
+                   WHERE worker_profiles.public_token = ? AND worker_accounts.active = 1 AND worker_accounts.verified = 1""",
+                (public_token,),
+            ).fetchone()
+            if worker is None:
+                self.send_json({"error": "That worker QR is invalid or inactive."}, HTTPStatus.NOT_FOUND)
+                return
+            active = connection.execute(
+                "SELECT id FROM worker_company_access WHERE company_id = ? AND worker_id = ? AND status = 'active'",
+                (user["company_id"], worker["id"]),
+            ).fetchone()
+            if active:
+                self.send_json({"error": "This worker has already granted active access to your company.", "access_id": active["id"]}, HTTPStatus.CONFLICT)
+                return
+            pending = connection.execute(
+                "SELECT id FROM worker_access_requests WHERE company_id = ? AND worker_id = ? AND status = 'pending'",
+                (user["company_id"], worker["id"]),
+            ).fetchone()
+            if pending:
+                self.send_json({"error": "An access request is already waiting for this worker.", "request_id": pending["id"]}, HTTPStatus.CONFLICT)
+                return
+            cursor = connection.execute(
+                """INSERT INTO worker_access_requests(
+                       company_id, worker_id, requested_by_user_id, requested_fields, message,
+                       status, response_fields, responded_at, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?)""",
+                (user["company_id"], worker["id"], user["id"], json.dumps(requested_fields), message, now, now),
+            )
+            company = connection.execute("SELECT name FROM companies WHERE id = ?", (user["company_id"],)).fetchone()
+            create_in_app_notification(
+                connection, user["company_id"], "worker", int(worker["id"]), "access_request",
+                "Company access request",
+                f"{company['name']} requested access to {len(requested_fields)} worker passport field{'s' if len(requested_fields) != 1 else ''}.",
+                "/worker/#inbox",
+            )
+            connection.commit()
+            request_id = int(cursor.lastrowid)
+        self.write_audit(user, "worker_access_requested", "worker_access_requests", request_id, f"Requested worker passport fields: {', '.join(requested_fields)}")
+        self.send_json({"id": request_id, "status": "pending", "requested_fields": requested_fields, "created_at": now}, HTTPStatus.CREATED)
+
+    def handle_worker_access_requests_get(self, worker) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT worker_access_requests.*, companies.name AS company_name, companies.slug AS company_slug,
+                          users.name AS requested_by_name
+                   FROM worker_access_requests
+                   JOIN companies ON companies.id = worker_access_requests.company_id
+                   LEFT JOIN users ON users.id = worker_access_requests.requested_by_user_id
+                   WHERE worker_access_requests.worker_id = ?
+                   ORDER BY CASE worker_access_requests.status WHEN 'pending' THEN 0 ELSE 1 END,
+                            worker_access_requests.created_at DESC""",
+                (worker["id"],),
+            ).fetchall()
+        data = []
+        for row in rows:
+            item = dict(row)
+            item["requested_fields"] = json.loads(item["requested_fields"])
+            item["response_fields"] = json.loads(item["response_fields"] or "[]")
+            data.append(item)
+        self.send_json({"data": data, "available_fields": sorted(WORKER_SHARE_FIELDS)})
+
+    def handle_worker_access_request_respond(self, worker, request_id: int) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        decision = str(payload.get("decision", "")).strip().lower()
+        if decision not in {"approved", "declined"}:
+            self.send_json({"error": "Decision must be approved or declined."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        share_token = ""
+        visible_fields = []
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """SELECT worker_access_requests.*, companies.name AS company_name
+                   FROM worker_access_requests JOIN companies ON companies.id = worker_access_requests.company_id
+                   WHERE worker_access_requests.id = ? AND worker_access_requests.worker_id = ?""",
+                (request_id, worker["id"]),
+            ).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            if row["status"] != "pending":
+                self.send_json({"error": "This access request has already been answered."}, HTTPStatus.CONFLICT)
+                return
+            requested = set(json.loads(row["requested_fields"])) & WORKER_SHARE_FIELDS
+            if decision == "approved":
+                supplied = payload.get("visible_fields")
+                if not isinstance(supplied, list):
+                    self.send_json({"error": "Choose the fields you approve."}, HTTPStatus.BAD_REQUEST)
+                    return
+                visible_fields = sorted(set(supplied) & requested & WORKER_SHARE_FIELDS)
+                if not visible_fields:
+                    self.send_json({"error": "Approve at least one requested field or decline the request."}, HTTPStatus.BAD_REQUEST)
+                    return
+                share_token = secrets.token_urlsafe(24)
+                connection.execute(
+                    """INSERT INTO worker_company_access(worker_id, company_id, share_token, visible_fields, status, granted_at, revoked_at)
+                       VALUES (?, ?, ?, ?, 'active', ?, NULL)
+                       ON CONFLICT(worker_id, company_id) DO UPDATE SET share_token = excluded.share_token,
+                           visible_fields = excluded.visible_fields, status = 'active', granted_at = excluded.granted_at,
+                           revoked_at = NULL""",
+                    (worker["id"], row["company_id"], share_token, json.dumps(visible_fields), now),
+                )
+            connection.execute(
+                """UPDATE worker_access_requests SET status = ?, response_fields = ?, responded_at = ?, updated_at = ?
+                   WHERE id = ? AND worker_id = ? AND status = 'pending'""",
+                (decision, json.dumps(visible_fields), now, now, request_id, worker["id"]),
+            )
+            notify_company_workflow_users(
+                connection, int(row["company_id"]), "access_request_response", "Worker access request answered",
+                f"{worker['profile'].get('name') or 'A worker'} {decision} the passport access request.",
+                "/shared-workers",
+            )
+            connection.commit()
+            company_id = int(row["company_id"])
+        self.write_worker_audit(worker, company_id, f"worker_access_{decision}", "worker_access_requests", request_id, f"Worker {decision} fields: {', '.join(visible_fields)}")
+        response = {"id": request_id, "status": decision, "visible_fields": visible_fields, "responded_at": now}
+        if share_token:
+            response["share_url"] = f"{self.application_base_url()}/worker/share/{share_token}"
+        self.send_json(response)
 
     def handle_public_companies(self) -> None:
         with DB_LOCK, connect_database() as connection:
@@ -3952,6 +4162,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path == "/api/public/companies":
             self.handle_public_companies()
             return
+        if path == "/api/openapi.json":
+            self.send_file(STATIC_ROOT / "openapi.json", cache=True)
+            return
         if path == "/api/worker/status":
             self.handle_worker_status()
             return
@@ -3991,6 +4204,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/worker/shares":
                 self.handle_worker_shares_get(worker)
+                return
+            if path == "/api/worker/access-requests":
+                self.handle_worker_access_requests_get(worker)
                 return
             if path == "/api/worker/requests":
                 self.handle_worker_requests_get(worker)
@@ -4052,6 +4268,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/company/shared-workers":
             self.handle_company_shared_workers(self.request_user)
+            return
+        if path == "/api/company/worker-access-requests":
+            self.handle_company_access_requests_get(self.request_user)
             return
         if path == "/api/company/api-tokens":
             self.handle_company_api_tokens_get(self.request_user)
@@ -4162,6 +4381,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/worker/shares":
                 self.handle_worker_share_create(worker)
                 return
+            if parsed.path == "/api/worker/access-requests":
+                self.send_json({"error": "Access requests are created by companies and answered by workers."}, HTTPStatus.METHOD_NOT_ALLOWED)
+                return
             if parsed.path == "/api/worker/requests":
                 self.handle_worker_request_create(worker)
                 return
@@ -4173,6 +4395,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 self.handle_notification_read(worker, "worker", int(worker_workflow[3]))
                 return
             share_parts = parsed.path.strip("/").split("/")
+            if len(share_parts) == 5 and share_parts[:3] == ["api", "worker", "access-requests"] and share_parts[3].isdigit() and share_parts[4] == "respond":
+                self.handle_worker_access_request_respond(worker, int(share_parts[3]))
+                return
             if len(share_parts) == 5 and share_parts[:3] == ["api", "worker", "shares"] and share_parts[3].isdigit() and share_parts[4] == "revoke":
                 self.handle_worker_share_revoke(worker, int(share_parts[3]))
                 return
@@ -4218,6 +4443,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/company/requests":
             self.handle_company_request_create(user)
+            return
+        if parsed.path == "/api/company/worker-access-requests":
+            self.handle_company_access_request_create(user)
             return
         if parsed.path == "/api/company/induction-reviews":
             self.handle_company_induction_create(user)

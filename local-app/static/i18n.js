@@ -90,7 +90,33 @@
     "Delivery history": ["Histórico de entrega", "Historial de entrega"], "Prepared and sent notifications": ["Notificações preparadas e enviadas", "Notificaciones preparadas y enviadas"],
     "Date": ["Data", "Fecha"], "Kind": ["Tipo", "Tipo"], "Recipient": ["Destinatário", "Destinatario"], "Attempts": ["Tentativas", "Intentos"], "Action": ["Ação", "Acción"],
     "No local notification history yet.": ["Ainda não existe histórico local de notificações.", "Aún no hay historial local de notificaciones."],
-    "Packages are validated and dry-run from the command line before an explicitly authorised apply.": ["Os pacotes são validados e simulados na linha de comandos antes de uma aplicação explicitamente autorizada.", "Los paquetes se validan y simulan desde la línea de comandos antes de una aplicación autorizada explícitamente."]
+    "Packages are validated and dry-run from the command line before an explicitly authorised apply.": ["Os pacotes são validados e simulados na linha de comandos antes de uma aplicação explicitamente autorizada.", "Los paquetes se validan y simulan desde la línea de comandos antes de una aplicación autorizada explícitamente."],
+    "QR onboarding": ["Integração por QR", "Incorporación por QR"], "Request worker passport access": ["Pedir acesso ao passaporte do trabalhador", "Solicitar acceso al pasaporte del trabajador"],
+    "Scan the worker's Kompliance QR or paste its link. Nothing private is shared until the worker approves individual fields.": ["Digitalize o QR Kompliance do trabalhador ou cole a ligação. Nada privado é partilhado até o trabalhador aprovar campos individuais.", "Escanee el QR de Kompliance del trabajador o pegue el enlace. No se comparte nada privado hasta que el trabajador apruebe campos individuales."],
+    "Worker QR link or token": ["Ligação ou token QR do trabalhador", "Enlace o token QR del trabajador"], "Fields requested": ["Campos pedidos", "Campos solicitados"],
+    "Message to worker (optional)": ["Mensagem ao trabalhador (opcional)", "Mensaje al trabajador (opcional)"], "Why your company needs this access": ["Porque a sua empresa precisa deste acesso", "Por qué su empresa necesita este acceso"],
+    "Scan QR with camera": ["Digitalizar QR com a câmara", "Escanear QR con la cámara"], "Send access request": ["Enviar pedido de acesso", "Enviar solicitud de acceso"],
+    "Point the camera at the worker QR code.": ["Aponte a câmara para o código QR do trabalhador.", "Apunte la cámara al código QR del trabajador."], "Stop camera": ["Parar câmara", "Detener cámara"],
+    "Access request history": ["Histórico de pedidos de acesso", "Historial de solicitudes de acceso"], "No company access requests yet.": ["Ainda não existem pedidos de acesso da empresa.", "Aún no hay solicitudes de acceso de la empresa."],
+    "Consented access": ["Acesso consentido", "Acceso consentido"], "Active consent": ["Consentimento ativo", "Consentimiento activo"], "Shared fields": ["Campos partilhados", "Campos compartidos"],
+    "One profile. Your control.": ["Um perfil. O seu controlo.", "Un perfil. Su control."], "Carry your safety record from site to site.": ["Leve o seu registo de segurança de obra em obra.", "Lleve su historial de seguridad de obra en obra."],
+    "Keep your qualifications and documents together, then choose exactly what each company may see. Revoke access whenever you need to.": ["Mantenha qualificações e documentos juntos e escolha exatamente o que cada empresa pode ver. Revogue o acesso quando precisar.", "Mantenga sus cualificaciones y documentos juntos y elija exactamente qué puede ver cada empresa. Revoque el acceso cuando lo necesite."],
+    "Secure worker account": ["Conta segura do trabalhador", "Cuenta segura del trabajador"], "Versioned safety documents": ["Documentos de segurança com versões", "Documentos de seguridad versionados"],
+    "Company-specific consent": ["Consentimento específico por empresa", "Consentimiento específico por empresa"], "QR profile sharing": ["Partilha de perfil por QR", "Compartir perfil por QR"],
+    "Create account": ["Criar conta", "Crear cuenta"], "Full name": ["Nome completo", "Nombre completo"], "Create worker account": ["Criar conta de trabalhador", "Crear cuenta de trabajador"],
+    "Worker passport": ["Passaporte do trabalhador", "Pasaporte del trabajador"], "Your profile": ["O seu perfil", "Su perfil"], "Sharing & consent": ["Partilha e consentimento", "Compartir y consentimiento"], "Inbox & requests": ["Caixa de entrada e pedidos", "Bandeja y solicitudes"],
+    "Identity": ["Identidade", "Identidad"], "Worker profile": ["Perfil do trabalhador", "Perfil del trabajador"], "You control this data": ["Controla estes dados", "Usted controla estos datos"],
+    "Trade / occupation": ["Profissão / ocupação", "Oficio / ocupación"], "Preferred language": ["Idioma preferido", "Idioma preferido"], "Skills": ["Competências", "Habilidades"], "Qualifications": ["Qualificações", "Cualificaciones"],
+    "Certifications": ["Certificações", "Certificaciones"], "Training records": ["Registos de formação", "Registros de formación"], "Employment history": ["Histórico profissional", "Historial laboral"],
+    "Fields visible through your QR profile": ["Campos visíveis através do seu perfil QR", "Campos visibles mediante su perfil QR"], "Save profile": ["Guardar perfil", "Guardar perfil"],
+    "Evidence": ["Evidência", "Evidencia"], "10 MB maximum": ["Máximo de 10 MB", "Máximo de 10 MB"], "Category": ["Categoria", "Categoría"], "Title": ["Título", "Título"], "Expiry date": ["Data de validade", "Fecha de vencimiento"],
+    "Upload document": ["Carregar documento", "Subir documento"], "Consent": ["Consentimento", "Consentimiento"], "Company access": ["Acesso da empresa", "Acceso de la empresa"], "Revocable at any time": ["Revogável a qualquer momento", "Revocable en cualquier momento"],
+    "Choose what this company can see": ["Escolha o que esta empresa pode ver", "Elija lo que esta empresa puede ver"], "Grant or update access": ["Conceder ou atualizar acesso", "Conceder o actualizar acceso"],
+    "Communication": ["Comunicação", "Comunicación"], "Company access requests": ["Pedidos de acesso da empresa", "Solicitudes de acceso de la empresa"],
+    "You decide which requested passport fields each company may see. Declining shares nothing.": ["Decide quais campos pedidos cada empresa pode ver. Recusar não partilha nada.", "Usted decide qué campos solicitados puede ver cada empresa. Rechazar no comparte nada."],
+    "Create a request": ["Criar um pedido", "Crear una solicitud"], "My requests": ["Os meus pedidos", "Mis solicitudes"], "Conversations": ["Conversas", "Conversaciones"], "Induction approvals": ["Aprovações de indução", "Aprobaciones de inducción"],
+    "Send request": ["Enviar pedido", "Enviar solicitud"], "Approve selected": ["Aprovar selecionados", "Aprobar seleccionados"], "Choose fields to approve": ["Escolha os campos a aprovar", "Elija los campos a aprobar"], "Fields answered": ["Campos respondidos", "Campos respondidos"],
+    "No company access requests.": ["Sem pedidos de acesso da empresa.", "Sin solicitudes de acceso de la empresa."], "API contract": ["Contrato da API", "Contrato de la API"], "pending": ["pendente", "pendiente"], "approved": ["aprovado", "aprobado"], "declined": ["recusado", "rechazado"]
   };
   const dictionaries = {pt: {}, es: {}};
   Object.entries(entries).forEach(([english, values]) => { dictionaries.pt[english] = values[0]; dictionaries.es[english] = values[1]; });
@@ -132,8 +158,9 @@
     applying = true;
     document.documentElement.lang = language;
     translateNode(root);
-    const selector = document.querySelector("#app-language");
-    if (selector && selector.value !== language) selector.value = language;
+    document.querySelectorAll("#app-language, #language").forEach(selector => {
+      if (selector.value !== language) selector.value = language;
+    });
     applying = false;
   };
   const setLanguage = (value, notify = true) => {
@@ -151,7 +178,7 @@
   window.KomplianceI18n = {apply, setLanguage, getLanguage: () => language, supported: [...supported]};
   document.addEventListener("DOMContentLoaded", () => {
     apply(document.body);
-    document.querySelector("#app-language")?.addEventListener("change", event => setLanguage(event.target.value));
+    document.querySelectorAll("#app-language, #language").forEach(selector => selector.addEventListener("change", event => setLanguage(event.target.value)));
     observer.observe(document.body, {childList: true, subtree: true});
   });
 })();

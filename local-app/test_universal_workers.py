@@ -97,6 +97,10 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
 
     def test_consent_import_documents_api_and_tenant_isolation(self):
         platform = Client(self.base_url)
+        status, contract, _ = platform.json("/api/openapi.json")
+        self.assertEqual((status, contract["openapi"]), (200, "3.1.0"))
+        self.assertIn("/api/company/worker-access-requests", contract["paths"])
+        self.assertIn("/api/worker/access-requests/{requestId}/respond", contract["paths"])
         status, setup, _ = platform.json(
             "/api/auth/setup",
             "POST",
@@ -134,20 +138,41 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
             {"Content-Type": "application/pdf", "X-Document-Category": "Certification", "X-Document-Title": "Electrical Certificate", "X-File-Name": "certificate.pdf"},
         )
         self.assertEqual(status, 201)
-        status, share, _ = worker.json(
-            "/api/worker/shares",
-            "POST",
-            {"company_id": tenant["id"], "visible_fields": ["name", "email", "trade", "certifications", "training_records", "inductions", "documents"]},
-            worker_csrf,
-        )
-        self.assertEqual(status, 201)
-
         tenant_client = Client(self.base_url)
         status, login, _ = tenant_client.json(
             "/api/auth/login", "POST", {"email": "tenant@test.local", "password": "TenantPass2026!"}
         )
         self.assertEqual(status, 200)
         tenant_csrf = login["csrf_token"]
+
+        # A scanned QR creates only a pending, tenant-scoped request. Access begins
+        # only after the worker approves a subset of the requested fields.
+        status, worker_status, _ = worker.json("/api/worker/status")
+        public_token = worker_status["worker"]["public_token"]
+        requested_fields = ["name", "email", "phone", "trade", "certifications", "training_records", "inductions", "documents"]
+        status, access_request, _ = tenant_client.json(
+            "/api/company/worker-access-requests", "POST",
+            {"qr_value": f"{self.base_url}/worker/public/{public_token}", "requested_fields": requested_fields, "message": "Site onboarding evidence"},
+            tenant_csrf,
+        )
+        self.assertEqual((status, access_request["status"]), (201, "pending"))
+        self.assertEqual(tenant_client.json("/api/company/shared-workers")[1]["data"], [])
+        self.assertEqual(platform.json("/api/company/worker-access-requests")[1]["data"], [])
+        status, worker_access_requests, _ = worker.json("/api/worker/access-requests")
+        self.assertEqual(worker_access_requests["data"][0]["company_name"], "Tenant Two")
+        self.assertEqual(worker_access_requests["data"][0]["status"], "pending")
+        approved_fields = [field for field in requested_fields if field != "phone"]
+        status, share, _ = worker.json(
+            f"/api/worker/access-requests/{access_request['id']}/respond", "POST",
+            {"decision": "approved", "visible_fields": approved_fields}, worker_csrf,
+        )
+        self.assertEqual((status, share["status"]), (200, "approved"))
+        self.assertNotIn("phone", share["visible_fields"])
+        self.assertEqual(worker.json(
+            f"/api/worker/access-requests/{access_request['id']}/respond", "POST",
+            {"decision": "approved", "visible_fields": approved_fields}, worker_csrf,
+        )[0], 409)
+
         status, shared, _ = tenant_client.json("/api/company/shared-workers")
         self.assertEqual(len(shared["data"]), 1)
         self.assertEqual(shared["data"][0]["profile"]["email"], "aoife@test.local")
@@ -278,6 +303,17 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
         self.assertEqual(worker.json(f"/api/worker/shares/{share_id}/revoke", "POST", {}, worker_csrf)[0], 200)
         self.assertEqual(tenant_client.json("/api/company/shared-workers")[1]["data"], [])
         self.assertEqual(Client(self.base_url).call(share["share_url"].removeprefix(self.base_url))[0], 404)
+        status, declined_request, _ = tenant_client.json(
+            "/api/company/worker-access-requests", "POST",
+            {"qr_value": public_token, "requested_fields": ["name", "documents"]}, tenant_csrf,
+        )
+        self.assertEqual(status, 201)
+        status, declined, _ = worker.json(
+            f"/api/worker/access-requests/{declined_request['id']}/respond", "POST",
+            {"decision": "declined", "visible_fields": ["name"]}, worker_csrf,
+        )
+        self.assertEqual((status, declined["status"], declined["visible_fields"]), (200, "declined", []))
+        self.assertEqual(tenant_client.json("/api/company/shared-workers")[1]["data"], [])
 
         database = sqlite3.connect(Path(self.temp_directory.name) / "kompliance.db")
         try:

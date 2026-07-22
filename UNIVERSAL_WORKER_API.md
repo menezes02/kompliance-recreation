@@ -20,6 +20,9 @@ unknown token returns `401`. A resource that the worker has not shared returns
 
 ## Endpoints
 
+The machine-readable OpenAPI 3.1 contract is available from
+`GET /api/openapi.json` and is also stored at `local-app/static/openapi.json`.
+
 | Method | Endpoint | Result |
 |---|---|---|
 | GET | `/api/v1/shared-workers` | All active consented profiles for the token's company |
@@ -37,11 +40,14 @@ unshared fields.
 ## Consent lifecycle
 
 1. The worker creates and verifies a worker account.
-2. The worker selects a company and the exact fields to share.
-3. The company sees the worker in **Shared worker passports** and may import a
+2. A company scans/pastes the public worker QR and requests specific fields, or
+   the worker initiates a grant from the worker portal.
+3. For company-initiated requests, no private access exists until the worker
+   approves a subset of the requested fields. A decline shares nothing.
+4. The company sees the approved worker in **Shared worker passports** and may import a
    local tenant worker record.
-4. The worker may change the allowed fields or revoke the grant at any time.
-5. Revocation removes the worker from company screens, secure links and API
+5. The worker may change the allowed fields or revoke the grant at any time.
+6. Revocation removes the worker from company screens, secure links and API
    responses without deleting the worker-owned source profile.
 
 Company import creates or refreshes a local-only `workers` record identified by

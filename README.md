@@ -2,7 +2,7 @@
 
 Private, containerized recreation of the Kompliance health and safety application.
 
-The current release candidate adds a tenant-isolated Universal Worker Foundation, supervisor workflow/inbox, routed requests, worker conversations, induction approval history, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
+The current release candidate adds a tenant-isolated Universal Worker Foundation, company QR access requests with worker-controlled field approval, supervisor workflow/inbox, routed requests, worker conversations, induction approval history, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
 
 See [SUPERVISOR_WORKFLOW.md](SUPERVISOR_WORKFLOW.md) for workflow states, routes and the external notification-provider boundary.
 
@@ -40,7 +40,7 @@ python local-app/server.py
 
 Then open `http://127.0.0.1:8090/`.
 
-Worker self-registration is available at `http://127.0.0.1:8090/worker/`. The company application exposes consented profiles at `/shared-workers`. REST integration details are in `UNIVERSAL_WORKER_API.md`.
+Worker self-registration is available at `http://127.0.0.1:8090/worker/`. The company application exposes QR requests and consented profiles at `/shared-workers`. See `QR_ACCESS_REQUESTS.md` for the approval lifecycle and `UNIVERSAL_WORKER_API.md` for REST integration. The OpenAPI 3.1 contract is served at `/api/openapi.json`.
 
 Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
 

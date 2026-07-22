@@ -1,0 +1,35 @@
+.access-approval {
+  align-items: flex-start;
+}
+
+.access-approval.pending {
+  border-left: 5px solid #087863;
+}
+
+.access-approval > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.access-approval p {
+  white-space: pre-wrap;
+}
+
+.access-approval fieldset {
+  margin-top: 0.75rem;
+}
+
+.access-decision-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 150px;
+}
+
+@media (max-width: 760px) {
+  .access-decision-actions {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
