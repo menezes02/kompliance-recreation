@@ -13,6 +13,10 @@ already been granted.
   be created separately for development.
 - No new export, download, demo publication, or migration starts without a named
   approver and a written authorisation reference.
+- A worker owns the Universal Worker profile and grants access per company and
+  per field. Company access and integration output stop immediately on revocation.
+- A company import creates or refreshes only its local tenant record. It does not
+  transfer ownership of the worker source profile or alter protected customer data.
 
 ## Required approvals
 
@@ -42,6 +46,10 @@ KOMPLIANCE_AUTHORIZATION_REFERENCE=<ticket/email/contract reference>
 
 Credentials remain process-only and must never be placed in this register,
 `.env.example`, Git, logs, screenshots, or documentation.
+
+Company API secrets are displayed once, stored only as SHA-256 digests, scoped to
+one tenant and individually revocable. API responses are derived from the active
+worker consent grant; every successful read is added to that tenant's audit log.
 
 ## Authorisation log template
 

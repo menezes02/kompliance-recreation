@@ -41,7 +41,9 @@ DB_LOCK = threading.RLock()
 PROTECTED_RECORD_SOURCE = "production read-only export"
 AUTH_ENABLED = os.environ.get("KOMPLIANCE_APP_AUTH", "0").strip() == "1"
 SESSION_COOKIE = "kompliance_session"
+WORKER_SESSION_COOKIE = "kompliance_worker_session"
 SESSION_HOURS = 12
+WORKER_SESSION_HOURS = 24 * 7
 PASSWORD_ITERATIONS = 310_000
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCK_MINUTES = 15
@@ -65,6 +67,15 @@ DEFAULT_SETTINGS = {
     "compliance_recipient": "",
     "reminder_days": "30",
     "retention_days": "365",
+}
+
+WORKER_DOCUMENT_CATEGORIES = {
+    "GA1", "GA2", "GA3", "AF3", "RAMS", "Induction", "Certification",
+    "Licence", "Medical Certificate", "Training", "Other",
+}
+WORKER_SHARE_FIELDS = {
+    "name", "email", "phone", "trade", "skills", "qualifications", "certifications",
+    "training_records", "inductions", "employment_history", "documents",
 }
 
 
@@ -263,6 +274,193 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS companies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                slug TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        now = utc_now()
+        connection.execute(
+            "INSERT OR IGNORE INTO companies(id, name, slug, active, created_at, updated_at) VALUES (1, ?, 'default-company', 1, ?, ?)",
+            (DEFAULT_SETTINGS["brand_company"], now, now),
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS company_settings (
+                company_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY(company_id, key),
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+            )"""
+        )
+        record_columns = {row["name"] for row in connection.execute("PRAGMA table_info(records)").fetchall()}
+        if "company_id" not in record_columns:
+            connection.execute("ALTER TABLE records ADD COLUMN company_id INTEGER NOT NULL DEFAULT 1")
+        if "company_id" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN company_id INTEGER NOT NULL DEFAULT 1")
+        if "platform_admin" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN platform_admin INTEGER NOT NULL DEFAULT 0")
+        audit_columns = {row["name"] for row in connection.execute("PRAGMA table_info(audit_log)").fetchall()}
+        if "company_id" not in audit_columns:
+            connection.execute("ALTER TABLE audit_log ADD COLUMN company_id INTEGER NOT NULL DEFAULT 1")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_records_company_resource ON records(company_id, resource)")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                verified INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                failed_attempts INTEGER NOT NULL DEFAULT 0,
+                locked_until TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_sessions (
+                token_hash TEXT PRIMARY KEY,
+                worker_id INTEGER NOT NULL,
+                csrf_token TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_profiles (
+                worker_id INTEGER PRIMARY KEY,
+                public_token TEXT NOT NULL UNIQUE,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_verification_tokens (
+                token_hash TEXT PRIMARY KEY,
+                worker_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_reset_tokens (
+                token_hash TEXT PRIMARY KEY,
+                worker_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_company_access (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id INTEGER NOT NULL,
+                company_id INTEGER NOT NULL,
+                share_token TEXT NOT NULL UNIQUE,
+                visible_fields TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                granted_at TEXT NOT NULL,
+                revoked_at TEXT,
+                imported_at TEXT,
+                UNIQUE(worker_id, company_id),
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                stored_name TEXT NOT NULL UNIQUE,
+                mime_type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                expiry_date TEXT,
+                review_status TEXT NOT NULL DEFAULT 'unread',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'prepared',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(worker_id) REFERENCES worker_accounts(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_document_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL,
+                company_id INTEGER NOT NULL,
+                reviewer_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES worker_documents(id) ON DELETE CASCADE,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(reviewer_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS company_api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+            )
+            """
+        )
         for key, value in DEFAULT_SETTINGS.items():
             connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)",
@@ -278,16 +476,9 @@ def initialize_database() -> None:
                 "SELECT value FROM metadata WHERE key = 'production_import_version'"
             ).fetchone()
             imported_version = imported_row["value"] if imported_row else None
-            if import_version and import_version != imported_version:
-                protected_ids = []
-                for existing in connection.execute("SELECT id, payload FROM records").fetchall():
-                    try:
-                        existing_payload = json.loads(existing["payload"])
-                    except (TypeError, json.JSONDecodeError):
-                        existing_payload = {}
-                    if is_protected_payload(existing_payload):
-                        protected_ids.append((existing["id"],))
-                connection.executemany("DELETE FROM records WHERE id = ?", protected_ids)
+            # The customer snapshot is append-once and immutable. A changed export must be
+            # reviewed and imported into a fresh data volume; startup never replaces rows.
+            if import_version and imported_version is None:
                 for resource, records in production_data.get("records", {}).items():
                     timestamps = production_data.get("timestamps", {}).get(
                         resource, []
@@ -599,9 +790,9 @@ def parse_record_date(value):
         return None
 
 
-def local_record(connection, resource: str, record_id: int):
+def local_record(connection, resource: str, record_id: int, company_id: int = 1):
     row = connection.execute(
-        "SELECT * FROM records WHERE resource = ? AND id = ?", (resource, record_id)
+        "SELECT * FROM records WHERE resource = ? AND id = ? AND company_id = ?", (resource, record_id, company_id)
     ).fetchone()
     if row is None:
         return None
@@ -611,14 +802,19 @@ def local_record(connection, resource: str, record_id: int):
     return record
 
 
-def application_settings() -> dict:
+def application_settings(company_id: int = 1) -> dict:
     settings = dict(DEFAULT_SETTINGS)
     with DB_LOCK, connect_database() as connection:
-        rows = connection.execute(
-            "SELECT key, value FROM metadata WHERE key LIKE 'setting_%'"
-        ).fetchall()
-    for row in rows:
-        settings[row["key"].removeprefix("setting_")] = row["value"]
+        if company_id == 1:
+            rows = connection.execute("SELECT key, value FROM metadata WHERE key LIKE 'setting_%'").fetchall()
+            for row in rows:
+                settings[row["key"].removeprefix("setting_")] = row["value"]
+        tenant_rows = connection.execute("SELECT key, value FROM company_settings WHERE company_id = ?", (company_id,)).fetchall()
+        for row in tenant_rows:
+            settings[row["key"]] = row["value"]
+        company = connection.execute("SELECT name FROM companies WHERE id = ?", (company_id,)).fetchone()
+        if company and not tenant_rows:
+            settings["brand_company"] = company["name"]
     environment_overrides = {
         "brand_name": "KOMPLIANCE_BRAND_NAME",
         "brand_company": "KOMPLIANCE_BRAND_COMPANY",
@@ -682,7 +878,7 @@ def write_system_audit(action: str, resource: str, summary: str = "") -> None:
         connection.commit()
 
 
-def build_compliance_reminder_data(days: int) -> dict:
+def build_compliance_reminder_data(days: int, company_id: int = 1) -> dict:
     today = datetime.now(UTC).date()
     cutoff = today + timedelta(days=days)
     definitions = (
@@ -691,12 +887,12 @@ def build_compliance_reminder_data(days: int) -> dict:
         ("risk_assessment", "expiry_date", "Risk assessment", "title"),
         ("local_induction_completions", "expires_at", "Induction certificate", "worker"),
     )
-    settings = application_settings()
+    settings = application_settings(company_id)
     items = []
     missing_dates = 0
     with DB_LOCK, connect_database() as connection:
         worker_rows = connection.execute(
-            "SELECT payload FROM records WHERE resource = 'workers'"
+            "SELECT payload FROM records WHERE resource = 'workers' AND company_id = ?", (company_id,)
         ).fetchall()
         worker_emails = {}
         for worker_row in worker_rows:
@@ -705,7 +901,7 @@ def build_compliance_reminder_data(days: int) -> dict:
                 worker_emails[str(worker["name"]).strip().casefold()] = str(worker["email"]).strip()
         for resource, date_field, category, subject_field in definitions:
             rows = connection.execute(
-                "SELECT * FROM records WHERE resource = ? ORDER BY id DESC", (resource,)
+                "SELECT * FROM records WHERE resource = ? AND company_id = ? ORDER BY id DESC", (resource, company_id)
             ).fetchall()
             for row in rows:
                 record = row_to_record(row)
@@ -755,15 +951,15 @@ def build_compliance_reminder_data(days: int) -> dict:
     }
 
 
-def prepare_compliance_notifications(days: int) -> dict:
-    reminder_data = build_compliance_reminder_data(days)
+def prepare_compliance_notifications(days: int, company_id: int = 1) -> dict:
+    reminder_data = build_compliance_reminder_data(days, company_id)
     due_items = [item for item in reminder_data["data"] if item["state"] in {"Overdue", "Due soon"}]
     now = utc_now()
     created = []
     duplicates = 0
     with DB_LOCK, connect_database() as connection:
         existing_rows = connection.execute(
-            "SELECT payload FROM records WHERE resource = 'local_notifications'"
+            "SELECT payload FROM records WHERE resource = 'local_notifications' AND company_id = ?", (company_id,)
         ).fetchall()
         fingerprints = {
             json.loads(row["payload"]).get("fingerprint")
@@ -794,8 +990,8 @@ def prepare_compliance_notifications(days: int) -> dict:
                 "local_only": True,
             }
             cursor = connection.execute(
-                "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_notifications', ?, ?, ?)",
-                (json.dumps(notification), now, now),
+                "INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('local_notifications', ?, ?, ?, ?)",
+                (json.dumps(notification), now, now, company_id),
             )
             created.append(cursor.lastrowid)
             fingerprints.add(fingerprint)
@@ -831,13 +1027,13 @@ def send_notification_email(notification: dict) -> None:
         client.send_message(message)
 
 
-def dispatch_notification_queue(limit: int = 100, record_ids: set[int] | None = None) -> dict:
+def dispatch_notification_queue(limit: int = 100, record_ids: set[int] | None = None, company_id: int = 1) -> dict:
     configuration = public_email_configuration()
     if not configuration["enabled"] or not configuration["configured"]:
         return {"sent": 0, "failed": 0, "skipped": 0, "enabled": configuration["enabled"], "configured": configuration["configured"]}
     with DB_LOCK, connect_database() as connection:
         rows = connection.execute(
-            "SELECT * FROM records WHERE resource = 'local_notifications' ORDER BY id ASC"
+            "SELECT * FROM records WHERE resource = 'local_notifications' AND company_id = ? ORDER BY id ASC", (company_id,)
         ).fetchall()
     sent = failed = skipped = 0
     for row in rows:
@@ -866,15 +1062,15 @@ def dispatch_notification_queue(limit: int = 100, record_ids: set[int] | None = 
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
             connection.execute(
-                "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_notifications' AND id = ?",
-                (json.dumps(updated), now, notification["id"]),
+                "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_notifications' AND id = ? AND company_id = ?",
+                (json.dumps(updated), now, notification["id"], company_id),
             )
             connection.commit()
     return {"sent": sent, "failed": failed, "skipped": skipped, "enabled": True, "configured": True}
 
 
-def retention_cleanup(dry_run: bool = True) -> dict:
-    settings = application_settings()
+def retention_cleanup(dry_run: bool = True, company_id: int = 1) -> dict:
+    settings = application_settings(company_id)
     retention_days = min(max(int(settings.get("retention_days", "365")), 30), 3650)
     now = datetime.now(UTC)
     cutoff = (now - timedelta(days=retention_days)).replace(microsecond=0).isoformat()
@@ -882,19 +1078,19 @@ def retention_cleanup(dry_run: bool = True) -> dict:
     with DB_LOCK, connect_database() as connection:
         notification_ids = [
             row["id"] for row in connection.execute(
-                "SELECT id FROM records WHERE resource = 'local_notifications' AND created_at < ?", (cutoff,)
+                "SELECT id FROM records WHERE resource = 'local_notifications' AND created_at < ? AND company_id = ?", (cutoff, company_id)
             ).fetchall()
         ]
         expired_sessions = connection.execute(
-            "SELECT COUNT(*) FROM sessions WHERE expires_at <= ?", (now_text,)
+            "SELECT COUNT(*) FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.expires_at <= ? AND users.company_id = ?", (now_text, company_id)
         ).fetchone()[0]
         expired_tokens = connection.execute(
-            "SELECT COUNT(*) FROM password_reset_tokens WHERE expires_at <= ? OR used_at IS NOT NULL", (now_text,)
+            "SELECT COUNT(*) FROM password_reset_tokens JOIN users ON users.id = password_reset_tokens.user_id WHERE (password_reset_tokens.expires_at <= ? OR password_reset_tokens.used_at IS NOT NULL) AND users.company_id = ?", (now_text, company_id)
         ).fetchone()[0]
         if not dry_run:
-            connection.executemany("DELETE FROM records WHERE resource = 'local_notifications' AND id = ?", [(item,) for item in notification_ids])
-            connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_text,))
-            connection.execute("DELETE FROM password_reset_tokens WHERE expires_at <= ? OR used_at IS NOT NULL", (now_text,))
+            connection.executemany("DELETE FROM records WHERE resource = 'local_notifications' AND id = ? AND company_id = ?", [(item, company_id) for item in notification_ids])
+            connection.execute("DELETE FROM sessions WHERE expires_at <= ? AND user_id IN (SELECT id FROM users WHERE company_id = ?)", (now_text, company_id))
+            connection.execute("DELETE FROM password_reset_tokens WHERE (expires_at <= ? OR used_at IS NOT NULL) AND user_id IN (SELECT id FROM users WHERE company_id = ?)", (now_text, company_id))
             connection.commit()
     return {
         "dry_run": dry_run,
@@ -1072,6 +1268,96 @@ def build_certificate_pdf(
     return assemble_pdf(objects)
 
 
+def build_qr_svg(value: str, title: str = "QR code") -> bytes:
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=2)
+    qr.add_data(value)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    size = len(matrix)
+    cells = []
+    for row_index, row in enumerate(matrix):
+        for column_index, active in enumerate(row):
+            if active:
+                cells.append(f'<rect x="{column_index}" y="{row_index}" width="1" height="1"/>')
+    safe_title = html.escape(title)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" role="img" aria-label="{safe_title}" shape-rendering="crispEdges">'
+        f'<title>{safe_title}</title><rect width="100%" height="100%" fill="white"/><g fill="#082f49">{"".join(cells)}</g></svg>'
+    ).encode("utf-8")
+
+
+def normalized_worker_profile(payload: dict, existing: dict | None = None) -> dict:
+    profile = dict(existing or {})
+    scalar_fields = (
+        "name", "phone", "trade", "medical_information", "preferred_language",
+        "emergency_contact_name", "emergency_contact_phone", "emergency_contact_address",
+    )
+    list_fields = (
+        "skills", "qualifications", "certifications", "training_records", "inductions", "employment_history",
+    )
+    for field in scalar_fields:
+        if field in payload:
+            profile[field] = str(payload.get(field, "")).strip()[:2000]
+    for field in list_fields:
+        if field in payload:
+            value = payload.get(field)
+            if not isinstance(value, list):
+                raise ValueError(f"{field} must be a list")
+            profile[field] = value[:100]
+    profile.setdefault("preferred_language", "en")
+    profile.setdefault("skills", [])
+    profile.setdefault("qualifications", [])
+    profile.setdefault("certifications", [])
+    profile.setdefault("training_records", [])
+    profile.setdefault("inductions", [])
+    profile.setdefault("employment_history", [])
+    if "public_fields" in payload:
+        requested = payload.get("public_fields")
+        if not isinstance(requested, list):
+            raise ValueError("public_fields must be a list")
+        profile["public_fields"] = sorted(
+            set(requested) & (WORKER_SHARE_FIELDS - {"email", "documents", "medical_information"})
+        )
+    profile.setdefault("public_fields", ["name", "trade"])
+    return profile
+
+
+def shared_worker_projection(connection, access_row) -> dict:
+    access = dict(access_row)
+    visible = set(json.loads(access["visible_fields"])) & WORKER_SHARE_FIELDS
+    profile = json.loads(access["profile_payload"])
+    projected = {field: profile.get(field) for field in visible if field not in {"email", "documents"}}
+    if "email" in visible:
+        projected["email"] = access["email"]
+    if "documents" in visible:
+        document_rows = connection.execute(
+            """SELECT worker_documents.*,
+                      COALESCE((SELECT status FROM worker_document_reviews
+                                WHERE worker_document_reviews.document_id = worker_documents.id
+                                  AND worker_document_reviews.company_id = ?
+                                ORDER BY worker_document_reviews.id DESC LIMIT 1), 'unread') AS company_review_status
+               FROM worker_documents WHERE worker_id = ? ORDER BY id DESC""",
+            (access["company_id"], access["worker_id"]),
+        ).fetchall()
+        projected["documents"] = []
+        for row in document_rows:
+            document = {
+                key: row[key]
+                for key in ("id", "category", "title", "original_name", "mime_type", "size", "version", "expiry_date", "created_at", "updated_at")
+            }
+            document["review_status"] = row["company_review_status"]
+            projected["documents"].append(document)
+    return {
+        "access_id": access["id"],
+        "worker_id": access["worker_id"],
+        "company_id": access["company_id"],
+        "status": access["status"],
+        "granted_at": access["granted_at"],
+        "visible_fields": sorted(visible),
+        "profile": projected,
+    }
+
+
 class KomplianceHandler(BaseHTTPRequestHandler):
     server_version = "KomplianceLocal/0.1"
 
@@ -1145,7 +1431,19 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             while chunk := handle.read(256 * 1024):
                 self.wfile.write(chunk)
 
-    def send_local_file(self, folder: str, filename: str) -> None:
+    def send_local_file(self, folder: str, filename: str, company_id: int) -> None:
+        resource_and_key = {
+            "uploads": ("local_uploads", "stored_name"),
+            "evidence": ("local_evidence", "stored_name"),
+            "reports": ("local_submissions", "report_file"),
+            "certificates": ("local_induction_completions", "certificate_file"),
+        }
+        resource, key = resource_and_key[folder]
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT payload FROM records WHERE resource = ? AND company_id = ?", (resource, company_id)).fetchall()
+        if not any(Path(str(json.loads(row["payload"]).get(key, ""))).name == Path(filename).name for row in rows):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
         root = (DATA_ROOT / folder).resolve()
         try:
             resolved = (root / Path(filename).name).resolve(strict=True)
@@ -1162,6 +1460,29 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(stat.st_size))
         self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Disposition", f'inline; filename="{resolved.name}"')
+        self.send_security_headers()
+        self.end_headers()
+        with resolved.open("rb") as handle:
+            while chunk := handle.read(256 * 1024):
+                self.wfile.write(chunk)
+
+    def send_worker_file(self, worker_id: int, stored_name: str, original_name: str, mime_type: str) -> None:
+        root = (DATA_ROOT / "worker-documents" / str(worker_id)).resolve()
+        try:
+            resolved = (root / Path(stored_name).name).resolve(strict=True)
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if root not in resolved.parents:
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        stat = resolved.stat()
+        safe_name = Path(original_name).name.replace('"', "")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", mime_type or "application/octet-stream")
+        self.send_header("Content-Length", str(stat.st_size))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
         self.send_security_headers()
         self.end_headers()
         with resolved.open("rb") as handle:
@@ -1204,6 +1525,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "email": "local@kompliance.test",
                 "name": "Local Administrator",
                 "role": "admin",
+                "company_id": 1,
+                "company_name": DEFAULT_SETTINGS["brand_company"],
+                "platform_admin": 1,
                 "csrf_token": "",
             }
         token = self.session_token()
@@ -1214,9 +1538,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         with DB_LOCK, connect_database() as connection:
             row = connection.execute(
                 """
-                SELECT users.id, users.email, users.name, users.role,
+                SELECT users.id, users.email, users.name, users.role, users.company_id,
+                       users.platform_admin, companies.name AS company_name,
                        sessions.csrf_token, sessions.expires_at
                 FROM sessions JOIN users ON users.id = sessions.user_id
+                JOIN companies ON companies.id = users.company_id
                 WHERE sessions.token_hash = ? AND sessions.expires_at > ?
                   AND users.active = 1
                 """,
@@ -1249,10 +1575,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         with DB_LOCK, connect_database() as connection:
             connection.execute(
                 """
-                INSERT INTO audit_log(user_id, actor, action, resource, record_id, summary, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO audit_log(user_id, actor, action, resource, record_id, summary, created_at, company_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, actor, action, resource, record_id, summary[:500], utc_now()),
+                (user_id, actor, action, resource, record_id, summary[:500], utc_now(), int(user.get("company_id", 1)) if user else 1),
             )
             connection.commit()
 
@@ -1278,6 +1604,72 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             f"{SESSION_COOKIE}={raw_token}; Path=/; HttpOnly; SameSite=Lax; "
             f"Max-Age={SESSION_HOURS * 3600}"
         )
+        if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
+            cookie += "; Secure"
+        return csrf_token, cookie
+
+    def worker_session_token(self) -> str:
+        cookies = SimpleCookie()
+        try:
+            cookies.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return ""
+        morsel = cookies.get(WORKER_SESSION_COOKIE)
+        return morsel.value if morsel else ""
+
+    def current_worker(self):
+        token = self.worker_session_token()
+        if not token:
+            return None
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """
+                SELECT worker_accounts.id, worker_accounts.email, worker_accounts.verified,
+                       worker_profiles.payload, worker_profiles.public_token,
+                       worker_sessions.csrf_token, worker_sessions.expires_at
+                FROM worker_sessions
+                JOIN worker_accounts ON worker_accounts.id = worker_sessions.worker_id
+                JOIN worker_profiles ON worker_profiles.worker_id = worker_accounts.id
+                WHERE worker_sessions.token_hash = ? AND worker_sessions.expires_at > ?
+                  AND worker_accounts.active = 1 AND worker_accounts.verified = 1
+                """,
+                (digest, utc_now()),
+            ).fetchone()
+        if row is None:
+            return None
+        worker = dict(row)
+        worker["profile"] = json.loads(worker.pop("payload"))
+        return worker
+
+    def require_worker(self):
+        worker = self.current_worker()
+        if worker is None:
+            self.send_json({"error": "Worker authentication required."}, HTTPStatus.UNAUTHORIZED)
+            return None
+        return worker
+
+    def require_worker_csrf(self, worker) -> bool:
+        supplied = self.headers.get("X-CSRF-Token", "")
+        if supplied and hmac.compare_digest(supplied, worker.get("csrf_token", "")):
+            return True
+        self.send_json({"error": "Invalid or missing worker CSRF token."}, HTTPStatus.FORBIDDEN)
+        return False
+
+    def create_worker_session(self, worker_id: int):
+        raw_token = secrets.token_urlsafe(32)
+        token_digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        csrf_token = secrets.token_urlsafe(24)
+        now = utc_now()
+        expires_at = (datetime.now(UTC) + timedelta(hours=WORKER_SESSION_HOURS)).replace(microsecond=0).isoformat()
+        with DB_LOCK, connect_database() as connection:
+            connection.execute("DELETE FROM worker_sessions WHERE expires_at <= ?", (now,))
+            connection.execute(
+                "INSERT INTO worker_sessions(token_hash, worker_id, csrf_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+                (token_digest, worker_id, csrf_token, expires_at, now),
+            )
+            connection.commit()
+        cookie = f"{WORKER_SESSION_COOKIE}={raw_token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={WORKER_SESSION_HOURS * 3600}"
         if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
             cookie += "; Secure"
         return csrf_token, cookie
@@ -1327,8 +1719,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 (token_digest, user_row["id"], expires_at, created_at, created_by),
             )
             cursor = connection.execute(
-                "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_notifications', ?, ?, ?)",
-                (json.dumps(notification_payload), created_at, created_at),
+                "INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('local_notifications', ?, ?, ?, ?)",
+                (json.dumps(notification_payload), created_at, created_at, int(user_row["company_id"]) if "company_id" in user_row.keys() else 1),
             )
             connection.commit()
         return reset_url, expires_at, cursor.lastrowid
@@ -1357,7 +1749,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "enabled": True,
                 "setup_required": setup_required,
                 "authenticated": user is not None,
-                "user": ({key: user[key] for key in ("name", "email", "role")} if user else None),
+                "user": ({key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin")} if user else None),
                 "csrf_token": user.get("csrf_token", "") if user else "",
             }
         )
@@ -1387,18 +1779,18 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             cursor = connection.execute(
                 """
-                INSERT INTO users(email, name, role, password_hash, active, created_at, updated_at)
-                VALUES (?, ?, 'admin', ?, 1, ?, ?)
+                INSERT INTO users(email, name, role, password_hash, active, created_at, updated_at, company_id, platform_admin)
+                VALUES (?, ?, 'admin', ?, 1, ?, ?, 1, 1)
                 """,
                 (email, name, password_hash(password), now, now),
             )
             connection.commit()
             user_id = cursor.lastrowid
         csrf_token, cookie = self.create_session(user_id)
-        user = {"id": user_id, "email": email, "name": name, "role": "admin"}
+        user = {"id": user_id, "email": email, "name": name, "role": "admin", "company_id": 1, "company_name": DEFAULT_SETTINGS["brand_company"], "platform_admin": 1}
         self.write_audit(user, "setup", "auth", summary="Initial administrator created")
         self.send_json(
-            {"authenticated": True, "user": {key: user[key] for key in ("name", "email", "role")}, "csrf_token": csrf_token},
+            {"authenticated": True, "user": {key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin")}, "csrf_token": csrf_token},
             HTTPStatus.CREATED,
             {"Set-Cookie": cookie},
         )
@@ -1413,7 +1805,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         password = str(payload.get("password", ""))
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
-            row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            row = connection.execute(
+                "SELECT users.*, companies.name AS company_name FROM users JOIN companies ON companies.id = users.company_id WHERE users.email = ?",
+                (email,),
+            ).fetchone()
             locked = bool(row and row["locked_until"] and row["locked_until"] > now)
             valid = bool(
                 row
@@ -1454,7 +1849,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         user = dict(row)
         self.write_audit(user, "login", "auth", summary="Successful login")
         self.send_json(
-            {"authenticated": True, "user": {key: user[key] for key in ("name", "email", "role")}, "csrf_token": csrf_token},
+            {"authenticated": True, "user": {key: user.get(key) for key in ("name", "email", "role", "company_id", "company_name", "platform_admin")}, "csrf_token": csrf_token},
             headers={"Set-Cookie": cookie},
         )
 
@@ -1520,11 +1915,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         allowed = email_allowed and address_allowed
         with DB_LOCK, connect_database() as connection:
             row = connection.execute(
-                "SELECT id, email, name FROM users WHERE email = ? AND active = 1", (email,)
+                "SELECT id, email, name, company_id FROM users WHERE email = ? AND active = 1", (email,)
             ).fetchone()
         if row and allowed:
             _, _, notification_id = self.issue_password_reset(row)
-            delivery = dispatch_notification_queue(limit=1, record_ids={notification_id})
+            delivery = dispatch_notification_queue(limit=1, record_ids={notification_id}, company_id=int(row["company_id"]))
             self.write_audit(None, "password_reset_requested", "auth", summary=f"Reset prepared for {email[:180]}")
             if delivery.get("sent"):
                 self.write_audit(None, "password_reset_sent", "auth", summary="Password reset email delivered")
@@ -1580,6 +1975,685 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         )
         self.send_json({"reset": True})
 
+    def handle_worker_register(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        email = str(payload.get("email", "")).strip().lower()
+        password = str(payload.get("password", ""))
+        name = str(payload.get("name", "")).strip()
+        if "@" not in email or len(password) < 12 or not name:
+            self.send_json({"error": "Name, valid email and a 12-character password are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        verification_required = os.environ.get("KOMPLIANCE_WORKER_EMAIL_VERIFICATION", "1").strip() == "1"
+        now = utc_now()
+        profile = normalized_worker_profile(payload)
+        profile["name"] = name
+        raw_verification = secrets.token_urlsafe(32)
+        verification_digest = hashlib.sha256(raw_verification.encode("utf-8")).hexdigest()
+        verification_url = f"{self.application_base_url()}/worker/?verify={raw_verification}"
+        expires_at = (datetime.now(UTC) + timedelta(hours=24)).replace(microsecond=0).isoformat()
+        notification_id = None
+        try:
+            with DB_LOCK, connect_database() as connection:
+                cursor = connection.execute(
+                    "INSERT INTO worker_accounts(email, password_hash, verified, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+                    (email, password_hash(password), 0 if verification_required else 1, now, now),
+                )
+                worker_id = cursor.lastrowid
+                connection.execute(
+                    "INSERT INTO worker_profiles(worker_id, public_token, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (worker_id, secrets.token_urlsafe(24), json.dumps(profile), now, now),
+                )
+                if verification_required:
+                    connection.execute(
+                        "INSERT INTO worker_verification_tokens(token_hash, worker_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)",
+                        (verification_digest, worker_id, expires_at, now),
+                    )
+                    notification_cursor = connection.execute(
+                        "INSERT INTO worker_notifications(worker_id, kind, recipient, subject, message, status, attempts, created_at, updated_at) VALUES (?, 'email_verification', ?, 'Verify your Kompliance worker account', ?, 'prepared', 0, ?, ?)",
+                        (worker_id, email, f"Verify your worker account within 24 hours: {verification_url}", now, now),
+                    )
+                    notification_id = notification_cursor.lastrowid
+                connection.commit()
+        except sqlite3.IntegrityError:
+            self.send_json({"error": "A worker account with this email already exists."}, HTTPStatus.CONFLICT)
+            return
+        response = {"registered": True, "verification_required": verification_required}
+        email_configuration = public_email_configuration()
+        if verification_required and email_configuration["enabled"] and email_configuration["configured"]:
+            try:
+                send_notification_email({"recipient": email, "subject": "Verify your Kompliance worker account", "message": f"Verify your worker account within 24 hours: {verification_url}"})
+                with DB_LOCK, connect_database() as connection:
+                    connection.execute("UPDATE worker_notifications SET status = 'sent', attempts = 1, updated_at = ? WHERE id = ?", (utc_now(), notification_id))
+                    connection.commit()
+                response["delivery_status"] = "sent"
+            except Exception as error:
+                with DB_LOCK, connect_database() as connection:
+                    connection.execute("UPDATE worker_notifications SET status = 'failed', attempts = 1, last_error = ?, updated_at = ? WHERE id = ?", (str(error)[:500], utc_now(), notification_id))
+                    connection.commit()
+                response["delivery_status"] = "failed"
+        if verification_required and (not email_configuration["enabled"] or not email_configuration["configured"]):
+            response["verification_url"] = verification_url
+        if not verification_required:
+            csrf_token, cookie = self.create_worker_session(worker_id)
+            response.update({"authenticated": True, "csrf_token": csrf_token})
+            self.send_json(response, HTTPStatus.CREATED, {"Set-Cookie": cookie})
+            return
+        self.send_json(response, HTTPStatus.CREATED)
+
+    def handle_worker_verify(self, query: str) -> None:
+        token = parse_qs(query).get("token", [""])[0].strip()
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest() if token else ""
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT worker_id FROM worker_verification_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+                (digest, now),
+            ).fetchone()
+            if row is None:
+                self.send_json({"error": "Verification link is invalid or expired."}, HTTPStatus.BAD_REQUEST)
+                return
+            connection.execute("UPDATE worker_accounts SET verified = 1, updated_at = ? WHERE id = ?", (now, row["worker_id"]))
+            connection.execute("UPDATE worker_verification_tokens SET used_at = ? WHERE token_hash = ?", (now, digest))
+            connection.commit()
+        csrf_token, cookie = self.create_worker_session(row["worker_id"])
+        self.send_json({"verified": True, "authenticated": True, "csrf_token": csrf_token}, headers={"Set-Cookie": cookie})
+
+    def handle_worker_login(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        email = str(payload.get("email", "")).strip().lower()
+        password = str(payload.get("password", ""))
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT * FROM worker_accounts WHERE email = ?", (email,)).fetchone()
+            locked = bool(row and row["locked_until"] and row["locked_until"] > now)
+            valid = bool(row and row["active"] and row["verified"] and not locked and password_matches(password, row["password_hash"]))
+            if row and not valid and row["active"] and row["verified"] and not locked:
+                failures = int(row["failed_attempts"] or 0) + 1
+                locked_until = (datetime.now(UTC) + timedelta(minutes=LOGIN_LOCK_MINUTES)).replace(microsecond=0).isoformat() if failures >= LOGIN_MAX_ATTEMPTS else None
+                connection.execute("UPDATE worker_accounts SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?", (failures, locked_until, now, row["id"]))
+                connection.commit()
+            elif valid:
+                connection.execute("UPDATE worker_accounts SET failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?", (now, row["id"]))
+                connection.commit()
+        if locked:
+            self.send_json({"error": "Worker account temporarily locked."}, HTTPStatus.TOO_MANY_REQUESTS)
+            return
+        if not valid:
+            message = "Verify your email before signing in." if row and not row["verified"] else "Invalid email or password."
+            self.send_json({"error": message}, HTTPStatus.UNAUTHORIZED)
+            return
+        csrf_token, cookie = self.create_worker_session(row["id"])
+        self.send_json({"authenticated": True, "csrf_token": csrf_token}, headers={"Set-Cookie": cookie})
+
+    def handle_worker_status(self) -> None:
+        worker = self.current_worker()
+        self.send_json({
+            "authenticated": worker is not None,
+            "worker": ({"id": worker["id"], "email": worker["email"], "profile": worker["profile"], "public_token": worker["public_token"]} if worker else None),
+            "csrf_token": worker.get("csrf_token", "") if worker else "",
+        })
+
+    def handle_worker_logout(self, worker) -> None:
+        token = self.worker_session_token()
+        if token:
+            with DB_LOCK, connect_database() as connection:
+                connection.execute("DELETE FROM worker_sessions WHERE token_hash = ?", (hashlib.sha256(token.encode("utf-8")).hexdigest(),))
+                connection.commit()
+        self.send_json({"logged_out": True}, headers={"Set-Cookie": f"{WORKER_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"})
+
+    def handle_worker_profile_update(self, worker) -> None:
+        try:
+            payload = self.read_json_body()
+            profile = normalized_worker_profile(payload, worker["profile"])
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        if not profile.get("name"):
+            self.send_json({"error": "Worker name is required."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            connection.execute("UPDATE worker_profiles SET payload = ?, updated_at = ? WHERE worker_id = ?", (json.dumps(profile), now, worker["id"]))
+            connection.commit()
+        self.send_json({"profile": profile, "updated_at": now})
+
+    def handle_worker_documents_get(self, worker) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT * FROM worker_documents WHERE worker_id = ? ORDER BY id DESC", (worker["id"],)).fetchall()
+        self.send_json({"data": [dict(row) for row in rows], "categories": sorted(WORKER_DOCUMENT_CATEGORIES)})
+
+    def handle_worker_document_upload(self, worker) -> None:
+        category = unquote(self.headers.get("X-Document-Category", "Other")).strip()
+        title = unquote(self.headers.get("X-Document-Title", "")).strip()
+        original_name = Path(unquote(self.headers.get("X-File-Name", "document.bin"))).name
+        expiry_date = unquote(self.headers.get("X-Expiry-Date", "")).strip()
+        extension = Path(original_name).suffix.lower()
+        allowed_extensions = {".pdf", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".webp"}
+        if category not in WORKER_DOCUMENT_CATEGORIES or not title or extension not in allowed_extensions:
+            self.send_json({"error": "A valid category, title and supported document are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        if expiry_date and parse_record_date(expiry_date) is None:
+            self.send_json({"error": "Expiry date is invalid."}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            content = self.read_raw_body()
+        except ValueError as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        folder = DATA_ROOT / "worker-documents" / str(worker["id"])
+        folder.mkdir(parents=True, exist_ok=True)
+        stored_name = f"{worker['id']}-{secrets.token_hex(12)}{extension}"
+        (folder / stored_name).write_bytes(content)
+        now = utc_now()
+        mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+        with DB_LOCK, connect_database() as connection:
+            version = 1 + connection.execute("SELECT COUNT(*) FROM worker_documents WHERE worker_id = ? AND category = ? AND title = ? COLLATE NOCASE", (worker["id"], category, title)).fetchone()[0]
+            cursor = connection.execute(
+                "INSERT INTO worker_documents(worker_id, category, title, original_name, stored_name, mime_type, size, version, expiry_date, review_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)",
+                (worker["id"], category, title, original_name, stored_name, mime_type, len(content), version, expiry_date or None, now, now),
+            )
+            connection.commit()
+        self.send_json({"id": cursor.lastrowid, "category": category, "title": title, "original_name": original_name, "stored_name": stored_name, "size": len(content), "version": version, "expiry_date": expiry_date, "review_status": "unread"}, HTTPStatus.CREATED)
+
+    def handle_worker_document_delete(self, worker, document_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT stored_name FROM worker_documents WHERE id = ? AND worker_id = ?", (document_id, worker["id"])).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            connection.execute("DELETE FROM worker_documents WHERE id = ? AND worker_id = ?", (document_id, worker["id"]))
+            connection.commit()
+        path = DATA_ROOT / "worker-documents" / str(worker["id"]) / row["stored_name"]
+        if path.is_file():
+            path.unlink()
+        self.send_json({"deleted": True, "id": document_id})
+
+    def handle_worker_shares_get(self, worker) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT worker_company_access.*, companies.name AS company_name FROM worker_company_access JOIN companies ON companies.id = worker_company_access.company_id WHERE worker_id = ? ORDER BY companies.name", (worker["id"],)).fetchall()
+        data = []
+        for row in rows:
+            item = dict(row)
+            item["visible_fields"] = json.loads(item["visible_fields"])
+            item["share_url"] = f"{self.application_base_url()}/worker/share/{item['share_token']}"
+            data.append(item)
+        self.send_json({"data": data, "available_fields": sorted(WORKER_SHARE_FIELDS)})
+
+    def handle_worker_share_create(self, worker) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        company_id = int(payload.get("company_id", 0)) if str(payload.get("company_id", "")).isdigit() else 0
+        visible_fields = sorted(set(payload.get("visible_fields") or []) & WORKER_SHARE_FIELDS)
+        if not company_id or not visible_fields:
+            self.send_json({"error": "Company and at least one shared field are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        with DB_LOCK, connect_database() as connection:
+            company = connection.execute("SELECT id FROM companies WHERE id = ? AND active = 1", (company_id,)).fetchone()
+            if company is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            now = utc_now()
+            token = secrets.token_urlsafe(24)
+            connection.execute(
+                "INSERT INTO worker_company_access(worker_id, company_id, share_token, visible_fields, status, granted_at, revoked_at) VALUES (?, ?, ?, ?, 'active', ?, NULL) ON CONFLICT(worker_id, company_id) DO UPDATE SET share_token = excluded.share_token, visible_fields = excluded.visible_fields, status = 'active', granted_at = excluded.granted_at, revoked_at = NULL",
+                (worker["id"], company_id, token, json.dumps(visible_fields), now),
+            )
+            connection.commit()
+        self.send_json({"shared": True, "company_id": company_id, "visible_fields": visible_fields, "share_url": f"{self.application_base_url()}/worker/share/{token}"}, HTTPStatus.CREATED)
+
+    def handle_worker_share_revoke(self, worker, access_id: int) -> None:
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute("UPDATE worker_company_access SET status = 'revoked', revoked_at = ? WHERE id = ? AND worker_id = ?", (now, access_id, worker["id"]))
+            connection.commit()
+        if not cursor.rowcount:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_json({"revoked": True, "id": access_id, "revoked_at": now})
+
+    def handle_public_companies(self) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT id, name, slug FROM companies WHERE active = 1 ORDER BY name").fetchall()
+        self.send_json({"data": [dict(row) for row in rows]})
+
+    def handle_worker_recovery_request(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        email = str(payload.get("email", "")).strip().lower()
+        raw_token = secrets.token_urlsafe(32)
+        digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        now = utc_now()
+        expires_at = (datetime.now(UTC) + timedelta(minutes=RESET_TOKEN_MINUTES)).replace(microsecond=0).isoformat()
+        reset_url = f"{self.application_base_url()}/worker/?reset={raw_token}"
+        worker_id = None
+        notification_id = None
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT id FROM worker_accounts WHERE email = ? AND active = 1", (email,)).fetchone()
+            if row:
+                worker_id = int(row["id"])
+                connection.execute(
+                    "INSERT INTO worker_reset_tokens(token_hash, worker_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)",
+                    (digest, worker_id, expires_at, now),
+                )
+                notification_cursor = connection.execute(
+                    "INSERT INTO worker_notifications(worker_id, kind, recipient, subject, message, status, attempts, created_at, updated_at) VALUES (?, 'password_reset', ?, 'Reset your Kompliance worker password', ?, 'prepared', 0, ?, ?)",
+                    (worker_id, email, f"Reset your worker password within {RESET_TOKEN_MINUTES} minutes: {reset_url}", now, now),
+                )
+                notification_id = notification_cursor.lastrowid
+                connection.commit()
+        response = {"accepted": True, "message": "If the worker account exists, a reset message has been prepared."}
+        configuration = public_email_configuration()
+        if worker_id and (not configuration["enabled"] or not configuration["configured"]):
+            response["reset_url"] = reset_url
+        elif worker_id:
+            try:
+                send_notification_email({"recipient": email, "subject": "Reset your Kompliance worker password", "message": f"Reset your worker password within {RESET_TOKEN_MINUTES} minutes: {reset_url}"})
+                with DB_LOCK, connect_database() as connection:
+                    connection.execute("UPDATE worker_notifications SET status = 'sent', attempts = 1, updated_at = ? WHERE id = ?", (utc_now(), notification_id))
+                    connection.commit()
+            except Exception as error:
+                with DB_LOCK, connect_database() as connection:
+                    connection.execute("UPDATE worker_notifications SET status = 'failed', attempts = 1, last_error = ?, updated_at = ? WHERE id = ?", (str(error)[:500], utc_now(), notification_id))
+                    connection.commit()
+        time.sleep(0.15)
+        self.send_json(response, HTTPStatus.ACCEPTED)
+
+    def handle_worker_recovery_reset(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        token = str(payload.get("token", "")).strip()
+        password = str(payload.get("password", ""))
+        if not token or len(password) < 12:
+            self.send_json({"error": "A valid token and 12-character password are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT worker_id FROM worker_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+                (digest, now),
+            ).fetchone()
+            if row is None:
+                self.send_json({"error": "This reset link is invalid or expired."}, HTTPStatus.BAD_REQUEST)
+                return
+            connection.execute(
+                "UPDATE worker_accounts SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
+                (password_hash(password), now, row["worker_id"]),
+            )
+            connection.execute("UPDATE worker_reset_tokens SET used_at = ? WHERE token_hash = ?", (now, digest))
+            connection.execute("DELETE FROM worker_sessions WHERE worker_id = ?", (row["worker_id"],))
+            connection.commit()
+        self.send_json({"reset": True})
+
+    def handle_worker_qr(self, worker) -> None:
+        url = f"{self.application_base_url()}/worker/public/{worker['public_token']}"
+        body = build_qr_svg(url, "Worker profile QR code")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_worker_document_file(self, worker, document_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute("SELECT * FROM worker_documents WHERE id = ? AND worker_id = ?", (document_id, worker["id"])).fetchone()
+        if row is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_worker_file(row["worker_id"], row["stored_name"], row["original_name"], row["mime_type"])
+
+    def handle_public_worker_profile(self, token: str) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT worker_profiles.payload FROM worker_profiles JOIN worker_accounts ON worker_accounts.id = worker_profiles.worker_id WHERE public_token = ? AND worker_accounts.active = 1 AND worker_accounts.verified = 1",
+                (token,),
+            ).fetchone()
+        if row is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        profile = json.loads(row["payload"])
+        fields = set(profile.get("public_fields", ["name", "trade"])) & (WORKER_SHARE_FIELDS - {"email", "documents"})
+        labels = {field: field.replace("_", " ").title() for field in fields}
+        items = "".join(
+            f"<dt>{html.escape(labels[field])}</dt><dd>{html.escape(', '.join(map(str, profile.get(field, []))) if isinstance(profile.get(field), list) else str(profile.get(field, '') or '—'))}</dd>"
+            for field in sorted(fields)
+        )
+        self.send_html(f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Worker profile</title></head><body style='margin:0;background:#edf5f3;font-family:system-ui;color:#15324b'><main style='max-width:680px;margin:8vh auto;background:#fff;border-radius:20px;padding:2rem;box-shadow:0 20px 70px #15324b20'><div style='color:#087863;font-weight:800;letter-spacing:.08em'>KOMPLIANCE WORKER</div><h1>Verified worker profile</h1><p>This worker controls which fields are public. Company-specific documents and details require explicit consent.</p><dl style='display:grid;grid-template-columns:11rem 1fr;gap:.8rem;border-top:1px solid #d9e7e3;padding-top:1.5rem'>{items}</dl></main></body></html>""")
+
+    def handle_public_worker_share(self, token: str) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """SELECT worker_company_access.*, worker_accounts.email, worker_profiles.payload AS profile_payload,
+                          companies.name AS company_name
+                   FROM worker_company_access
+                   JOIN worker_accounts ON worker_accounts.id = worker_company_access.worker_id
+                   JOIN worker_profiles ON worker_profiles.worker_id = worker_company_access.worker_id
+                   JOIN companies ON companies.id = worker_company_access.company_id
+                   WHERE worker_company_access.share_token = ? AND worker_company_access.status = 'active'
+                     AND worker_accounts.active = 1""",
+                (token,),
+            ).fetchone()
+            projection = shared_worker_projection(connection, row) if row else None
+        if projection is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        profile = projection["profile"]
+        items = []
+        for field, value in profile.items():
+            if field == "documents":
+                links = "".join(
+                    f"<li><a href='/worker/share/{html.escape(token)}/documents/{doc['id']}'>{html.escape(doc['title'])}</a> · {html.escape(doc['category'])} · v{doc['version']}</li>"
+                    for doc in value
+                )
+                items.append(f"<dt>Documents</dt><dd><ul>{links or '<li>None shared</li>'}</ul></dd>")
+            else:
+                rendered = ", ".join(map(str, value)) if isinstance(value, list) else str(value or "—")
+                items.append(f"<dt>{html.escape(field.replace('_', ' ').title())}</dt><dd>{html.escape(rendered)}</dd>")
+        self.send_html(f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Consented worker profile</title></head><body style='margin:0;background:#edf5f3;font-family:system-ui;color:#15324b'><main style='max-width:760px;margin:6vh auto;background:#fff;border-radius:20px;padding:2rem;box-shadow:0 20px 70px #15324b20'><div style='color:#087863;font-weight:800'>CONSENTED SHARE</div><h1>Worker profile for {html.escape(str(row['company_name']))}</h1><p>The worker can revoke this access at any time.</p><dl style='display:grid;grid-template-columns:11rem 1fr;gap:.9rem;border-top:1px solid #d9e7e3;padding-top:1.5rem'>{''.join(items)}</dl></main></body></html>""")
+
+    def handle_public_shared_document(self, token: str, document_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """SELECT worker_documents.* FROM worker_company_access
+                   JOIN worker_documents ON worker_documents.worker_id = worker_company_access.worker_id
+                   WHERE worker_company_access.share_token = ? AND worker_company_access.status = 'active'
+                     AND worker_documents.id = ? AND worker_company_access.visible_fields LIKE '%documents%'""",
+                (token, document_id),
+            ).fetchone()
+        if row is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_worker_file(row["worker_id"], row["stored_name"], row["original_name"], row["mime_type"])
+
+    def handle_companies_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            if user.get("platform_admin"):
+                rows = connection.execute("SELECT id, name, slug, active, created_at FROM companies ORDER BY name").fetchall()
+            else:
+                rows = connection.execute("SELECT id, name, slug, active, created_at FROM companies WHERE id = ?", (user["company_id"],)).fetchall()
+        self.send_json({"data": [dict(row) for row in rows]})
+
+    def handle_company_create(self, user) -> None:
+        if not user.get("platform_admin"):
+            self.send_json({"error": "Platform administrator role required."}, HTTPStatus.FORBIDDEN)
+            return
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        name = str(payload.get("name", "")).strip()
+        admin_name = str(payload.get("admin_name", "")).strip()
+        admin_email = str(payload.get("admin_email", "")).strip().lower()
+        admin_password = str(payload.get("admin_password", ""))
+        slug = "-".join("".join(character.lower() if character.isalnum() else " " for character in name).split())[:60]
+        if not name or not slug or not admin_name or "@" not in admin_email or len(admin_password) < 12:
+            self.send_json({"error": "Company name and an administrator with a valid email and 12-character password are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        try:
+            with DB_LOCK, connect_database() as connection:
+                cursor = connection.execute("INSERT INTO companies(name, slug, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)", (name, slug, now, now))
+                company_id = cursor.lastrowid
+                admin_cursor = connection.execute(
+                    "INSERT INTO users(email, name, role, password_hash, active, created_at, updated_at, company_id, platform_admin) VALUES (?, ?, 'admin', ?, 1, ?, ?, ?, 0)",
+                    (admin_email, admin_name, password_hash(admin_password), now, now, company_id),
+                )
+                connection.commit()
+        except sqlite3.IntegrityError:
+            self.send_json({"error": "That company slug or administrator email already exists."}, HTTPStatus.CONFLICT)
+            return
+        self.write_audit(user, "company_created", "companies", company_id, f"Created tenant {name}")
+        self.send_json({"id": company_id, "name": name, "slug": slug, "admin_user_id": admin_cursor.lastrowid}, HTTPStatus.CREATED)
+
+    def handle_company_shared_workers(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT worker_company_access.*, worker_accounts.email, worker_profiles.payload AS profile_payload
+                   FROM worker_company_access
+                   JOIN worker_accounts ON worker_accounts.id = worker_company_access.worker_id
+                   JOIN worker_profiles ON worker_profiles.worker_id = worker_company_access.worker_id
+                   WHERE worker_company_access.company_id = ? AND worker_company_access.status = 'active'
+                   ORDER BY worker_company_access.granted_at DESC""",
+                (user["company_id"],),
+            ).fetchall()
+            data = [shared_worker_projection(connection, row) | {"imported_at": row["imported_at"]} for row in rows]
+        self.send_json({"data": data})
+
+    def handle_company_import_worker(self, user, access_id: int) -> None:
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """SELECT worker_company_access.*, worker_accounts.email, worker_profiles.payload AS profile_payload
+                   FROM worker_company_access
+                   JOIN worker_accounts ON worker_accounts.id = worker_company_access.worker_id
+                   JOIN worker_profiles ON worker_profiles.worker_id = worker_company_access.worker_id
+                   WHERE worker_company_access.id = ? AND worker_company_access.company_id = ? AND worker_company_access.status = 'active'""",
+                (access_id, user["company_id"]),
+            ).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            shared = shared_worker_projection(connection, row)
+            profile = shared["profile"]
+            worker_payload = {
+                "universal_worker_id": row["worker_id"], "name": profile.get("name", "Shared worker"),
+                "email": profile.get("email", ""), "phone": profile.get("phone", ""), "trade": profile.get("trade", ""),
+                "skills": profile.get("skills", []), "qualifications": profile.get("qualifications", []),
+                "status": "Active", "source": "local universal worker consent", "local_only": True,
+            }
+            existing = connection.execute("SELECT id, payload FROM records WHERE resource = 'workers' AND company_id = ?", (user["company_id"],)).fetchall()
+            match = next((record for record in existing if json.loads(record["payload"]).get("universal_worker_id") == row["worker_id"]), None)
+            if match:
+                connection.execute("UPDATE records SET payload = ?, updated_at = ? WHERE id = ? AND company_id = ?", (json.dumps(worker_payload), now, match["id"], user["company_id"]))
+                record_id = match["id"]
+            else:
+                cursor = connection.execute("INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('workers', ?, ?, ?, ?)", (json.dumps(worker_payload), now, now, user["company_id"]))
+                record_id = cursor.lastrowid
+            connection.execute("UPDATE worker_company_access SET imported_at = ? WHERE id = ?", (now, access_id))
+            connection.commit()
+        self.write_audit(user, "universal_worker_imported", "workers", record_id, "Imported consented worker profile")
+        self.send_json({"imported": True, "record_id": record_id, "access_id": access_id})
+
+    def handle_company_document_file(self, user, document_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """SELECT worker_documents.* FROM worker_documents
+                   JOIN worker_company_access ON worker_company_access.worker_id = worker_documents.worker_id
+                   WHERE worker_documents.id = ? AND worker_company_access.company_id = ?
+                     AND worker_company_access.status = 'active' AND worker_company_access.visible_fields LIKE '%documents%'""",
+                (document_id, user["company_id"]),
+            ).fetchone()
+        if row is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_worker_file(row["worker_id"], row["stored_name"], row["original_name"], row["mime_type"])
+
+    def handle_company_document_review(self, user, document_id: int) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        status = str(payload.get("status", "viewed")).lower()
+        note = str(payload.get("note", "")).strip()[:1000]
+        if status not in {"viewed", "approved", "declined"}:
+            self.send_json({"error": "Review status must be viewed, approved or declined."}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            allowed = connection.execute(
+                """SELECT worker_documents.id FROM worker_documents
+                   JOIN worker_company_access ON worker_company_access.worker_id = worker_documents.worker_id
+                   WHERE worker_documents.id = ? AND worker_company_access.company_id = ?
+                     AND worker_company_access.status = 'active' AND worker_company_access.visible_fields LIKE '%documents%'""",
+                (document_id, user["company_id"]),
+            ).fetchone()
+            if allowed is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            connection.execute("INSERT INTO worker_document_reviews(document_id, company_id, reviewer_id, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?)", (document_id, user["company_id"], user["id"], status, note, now))
+            connection.commit()
+        self.write_audit(user, "worker_document_reviewed", "worker_documents", document_id, f"Marked {status}")
+        self.send_json({"reviewed": True, "document_id": document_id, "status": status, "reviewed_at": now})
+
+    def handle_company_api_tokens_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute("SELECT id, name, active, created_at, last_used_at FROM company_api_tokens WHERE company_id = ? ORDER BY id DESC", (user["company_id"],)).fetchall()
+        self.send_json({"data": [dict(row) for row in rows]})
+
+    def handle_company_api_token_create(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        name = str(payload.get("name", "Integration token")).strip()[:100]
+        raw = f"kmp_{secrets.token_urlsafe(32)}"
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute("INSERT INTO company_api_tokens(company_id, name, token_hash, active, created_by, created_at) VALUES (?, ?, ?, 1, ?, ?)", (user["company_id"], name, hashlib.sha256(raw.encode()).hexdigest(), user["id"], now))
+            connection.commit()
+        self.write_audit(user, "api_token_created", "company_api_tokens", cursor.lastrowid, name)
+        self.send_json({"id": cursor.lastrowid, "name": name, "token": raw, "created_at": now}, HTTPStatus.CREATED)
+
+    def handle_company_api_token_revoke(self, user, token_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute("UPDATE company_api_tokens SET active = 0 WHERE id = ? AND company_id = ?", (token_id, user["company_id"]))
+            connection.commit()
+        if not cursor.rowcount:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.write_audit(user, "api_token_revoked", "company_api_tokens", token_id, "Integration token revoked")
+        self.send_json({"revoked": True, "id": token_id})
+
+    def authenticate_company_api(self):
+        authorization = self.headers.get("Authorization", "")
+        raw = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
+        digest = hashlib.sha256(raw.encode()).hexdigest() if raw else ""
+        with DB_LOCK, connect_database() as connection:
+            token = connection.execute("SELECT * FROM company_api_tokens WHERE token_hash = ? AND active = 1", (digest,)).fetchone()
+        if token is None:
+            self.send_json({"error": "Valid bearer token required."}, HTTPStatus.UNAUTHORIZED)
+            return None
+        return dict(token)
+
+    def record_company_api_use(self, token, resource: str, record_id=None) -> None:
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            connection.execute("UPDATE company_api_tokens SET last_used_at = ? WHERE id = ?", (now, token["id"]))
+            connection.execute(
+                "INSERT INTO audit_log(user_id, actor, action, resource, record_id, summary, created_at, company_id) VALUES (NULL, ?, 'api_read', ?, ?, ?, ?, ?)",
+                (f"api:{token['name']}", resource, record_id, "Consented worker API read", now, token["company_id"]),
+            )
+            connection.commit()
+
+    def handle_api_shared_workers(self) -> None:
+        token = self.authenticate_company_api()
+        if token is None:
+            return
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """SELECT worker_company_access.*, worker_accounts.email, worker_profiles.payload AS profile_payload
+                   FROM worker_company_access JOIN worker_accounts ON worker_accounts.id = worker_company_access.worker_id
+                   JOIN worker_profiles ON worker_profiles.worker_id = worker_company_access.worker_id
+                   WHERE worker_company_access.company_id = ? AND worker_company_access.status = 'active'""",
+                (token["company_id"],),
+            ).fetchall()
+            data = [shared_worker_projection(connection, row) for row in rows]
+        self.record_company_api_use(token, "shared_workers")
+        self.send_json({"data": data})
+
+    def handle_api_worker_resource(self, path: str) -> None:
+        token = self.authenticate_company_api()
+        if token is None:
+            return
+        parts = path.strip("/").split("/")
+        if len(parts) < 4 or parts[:3] != ["api", "v1", "workers"] or not parts[3].isdigit():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        worker_id = int(parts[3])
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """SELECT worker_company_access.*, worker_accounts.email, worker_profiles.payload AS profile_payload
+                   FROM worker_company_access JOIN worker_accounts ON worker_accounts.id = worker_company_access.worker_id
+                   JOIN worker_profiles ON worker_profiles.worker_id = worker_company_access.worker_id
+                   WHERE worker_company_access.company_id = ? AND worker_company_access.worker_id = ?
+                     AND worker_company_access.status = 'active'""",
+                (token["company_id"], worker_id),
+            ).fetchone()
+            if row is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            projection = shared_worker_projection(connection, row)
+            profile = projection["profile"]
+            if len(parts) == 4:
+                payload = projection
+                resource = "worker_profile"
+            elif len(parts) == 5 and parts[4] == "certifications":
+                if "certifications" not in projection["visible_fields"]:
+                    self.send_json({"error": "The worker has not shared certifications with this company."}, HTTPStatus.FORBIDDEN)
+                    return
+                payload = {"worker_id": worker_id, "data": profile.get("certifications", [])}
+                resource = "worker_certifications"
+            elif len(parts) == 5 and parts[4] == "training-records":
+                if "training_records" not in projection["visible_fields"]:
+                    self.send_json({"error": "The worker has not shared training records with this company."}, HTTPStatus.FORBIDDEN)
+                    return
+                payload = {"worker_id": worker_id, "data": profile.get("training_records", [])}
+                resource = "worker_training_records"
+            elif len(parts) == 5 and parts[4] == "inductions":
+                if "inductions" not in projection["visible_fields"]:
+                    self.send_json({"error": "The worker has not shared inductions with this company."}, HTTPStatus.FORBIDDEN)
+                    return
+                payload = {"worker_id": worker_id, "data": profile.get("inductions", [])}
+                resource = "worker_inductions"
+            elif len(parts) == 5 and parts[4] == "documents":
+                if "documents" not in projection["visible_fields"]:
+                    self.send_json({"error": "The worker has not shared documents with this company."}, HTTPStatus.FORBIDDEN)
+                    return
+                payload = {"worker_id": worker_id, "data": profile.get("documents", [])}
+                resource = "worker_documents"
+            elif len(parts) == 7 and parts[4] == "documents" and parts[5].isdigit() and parts[6] == "file":
+                if "documents" not in projection["visible_fields"]:
+                    self.send_json({"error": "The worker has not shared documents with this company."}, HTTPStatus.FORBIDDEN)
+                    return
+                document_id = int(parts[5])
+                document = connection.execute("SELECT * FROM worker_documents WHERE id = ? AND worker_id = ?", (document_id, worker_id)).fetchone()
+                if document is None:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                document = dict(document)
+                payload = None
+                resource = "worker_document_file"
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+        self.record_company_api_use(token, resource, worker_id)
+        if payload is None:
+            self.send_worker_file(document["worker_id"], document["stored_name"], document["original_name"], document["mime_type"])
+        else:
+            self.send_json(payload)
+
     def handle_audit(self, query: str) -> None:
         user = self.require_user({"admin"})
         if user is None:
@@ -1588,12 +2662,13 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         limit = min(max(int(params.get("limit", ["100"])[0]), 1), 500)
         with DB_LOCK, connect_database() as connection:
             rows = connection.execute(
-                "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
+                "SELECT * FROM audit_log WHERE company_id = ? ORDER BY id DESC LIMIT ?", (user["company_id"], limit)
             ).fetchall()
         self.send_json({"data": [dict(row) for row in rows], "total": len(rows)})
 
     def handle_users_get(self) -> None:
-        if self.require_user({"admin"}) is None:
+        user = self.require_user({"admin"})
+        if user is None:
             return
         with DB_LOCK, connect_database() as connection:
             rows = connection.execute(
@@ -1602,8 +2677,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                        users.failed_attempts, users.locked_until, users.created_at, users.updated_at,
                        COUNT(sessions.token_hash) AS session_count
                 FROM users LEFT JOIN sessions ON sessions.user_id = users.id
+                WHERE users.company_id = ?
                 GROUP BY users.id ORDER BY users.name
                 """
+                , (user["company_id"],)
             ).fetchall()
         self.send_json({"data": [dict(row) for row in rows]})
 
@@ -1625,10 +2702,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             with DB_LOCK, connect_database() as connection:
                 cursor = connection.execute(
                     """
-                    INSERT INTO users(email, name, role, password_hash, active, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                    INSERT INTO users(email, name, role, password_hash, active, created_at, updated_at, company_id)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?)
                     """,
-                    (email, name, role, password_hash(password), now, now),
+                    (email, name, role, password_hash(password), now, now, user["company_id"]),
                 )
                 connection.commit()
                 record_id = cursor.lastrowid
@@ -1654,12 +2731,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "You cannot disable or demote your own administrator account."}, HTTPStatus.BAD_REQUEST)
             return
         with DB_LOCK, connect_database() as connection:
-            existing = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            existing = connection.execute("SELECT * FROM users WHERE id = ? AND company_id = ?", (user_id, user["company_id"])).fetchone()
             if existing is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             active_admins = connection.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1"
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1 AND company_id = ?", (user["company_id"],)
             ).fetchone()[0]
             if existing["role"] == "admin" and existing["active"] and (role != "admin" or not active) and active_admins <= 1:
                 self.send_json({"error": "The final active administrator cannot be disabled or demoted."}, HTTPStatus.BAD_REQUEST)
@@ -1677,7 +2754,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
 
     def handle_user_revoke_sessions(self, user, user_id: int) -> None:
         with DB_LOCK, connect_database() as connection:
-            target = connection.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+            target = connection.execute("SELECT email FROM users WHERE id = ? AND company_id = ?", (user_id, user["company_id"])).fetchone()
             if target is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -1689,7 +2766,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
     def handle_user_reset_link(self, user, user_id: int) -> None:
         with DB_LOCK, connect_database() as connection:
             target = connection.execute(
-                "SELECT id, email, name FROM users WHERE id = ? AND active = 1", (user_id,)
+                "SELECT id, email, name, company_id FROM users WHERE id = ? AND active = 1 AND company_id = ?", (user_id, user["company_id"])
             ).fetchone()
         if target is None:
             self.send_json({"error": "Active account not found."}, HTTPStatus.NOT_FOUND)
@@ -1704,7 +2781,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
     def handle_settings_get(self, user) -> None:
         self.send_json(
             {
-                "settings": application_settings(),
+                "settings": application_settings(int(user["company_id"])),
                 "email": public_email_configuration(),
                 "scheduler": dict(SCHEDULER_STATE),
             }
@@ -1739,22 +2816,23 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         with DB_LOCK, connect_database() as connection:
             for key, value in updates.items():
                 connection.execute(
-                    "INSERT INTO metadata(key, value) VALUES (?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (f"setting_{key}", value),
+                    "INSERT INTO company_settings(company_id, key, value) VALUES (?, ?, ?) "
+                    "ON CONFLICT(company_id, key) DO UPDATE SET value = excluded.value",
+                    (user["company_id"], key, value),
                 )
             connection.commit()
         self.write_audit(user, "settings_updated", "settings", summary=f"Updated: {', '.join(sorted(updates))}")
         self.handle_settings_get(user)
 
     def handle_system_status(self, user) -> None:
+        company_id = int(user.get("company_id", 1))
         with DB_LOCK, connect_database() as connection:
             integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
-            rows = connection.execute("SELECT payload FROM records").fetchall()
+            rows = connection.execute("SELECT payload FROM records WHERE company_id = ?", (company_id,)).fetchall()
             active_sessions = connection.execute(
-                "SELECT COUNT(*) FROM sessions WHERE expires_at > ?", (utc_now(),)
+                "SELECT COUNT(*) FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.expires_at > ? AND users.company_id = ?", (utc_now(), company_id)
             ).fetchone()[0]
-            audit_events = connection.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+            audit_events = connection.execute("SELECT COUNT(*) FROM audit_log WHERE company_id = ?", (company_id,)).fetchone()[0]
         protected = local = 0
         for row in rows:
             try:
@@ -1777,7 +2855,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "disk": {"free_bytes": disk.free, "total_bytes": disk.total},
                 "email": public_email_configuration(),
                 "scheduler": dict(SCHEDULER_STATE),
-                "retention_preview": retention_cleanup(dry_run=True),
+                "retention_preview": retention_cleanup(dry_run=True, company_id=company_id),
             }
         )
 
@@ -1792,7 +2870,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if isinstance(identifiers, list):
             record_ids = {int(value) for value in identifiers if str(value).isdigit()}
         result = dispatch_notification_queue(
-            limit=min(max(int(payload.get("limit", 100)), 1), 500), record_ids=record_ids
+            limit=min(max(int(payload.get("limit", 100)), 1), 500), record_ids=record_ids, company_id=int(user.get("company_id", 1))
         )
         self.write_audit(
             user,
@@ -1814,7 +2892,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST,
             )
             return
-        result = retention_cleanup(dry_run=False)
+        result = retention_cleanup(dry_run=False, company_id=int(user.get("company_id", 1)))
         self.write_audit(
             user,
             "retention_cleanup",
@@ -1824,7 +2902,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         self.send_json(result)
 
     def handle_privacy_page(self) -> None:
-        settings = application_settings()
+        privacy_user = self.current_user()
+        settings = application_settings(int(privacy_user["company_id"]) if privacy_user else 1)
         brand = html.escape(settings.get("brand_name", "Kompliance"))
         contact = html.escape(settings.get("privacy_contact") or "Contact your organisation administrator")
         retention = html.escape(settings.get("retention_days", "365"))
@@ -1851,7 +2930,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
             existing_rows = connection.execute(
-                "SELECT payload FROM records WHERE resource = 'local_uploads'"
+                "SELECT payload FROM records WHERE resource = 'local_uploads' AND company_id = ?", (user["company_id"],)
             ).fetchall()
             version = 1 + sum(
                 1
@@ -1869,8 +2948,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "local_only": True,
             }
             cursor = connection.execute(
-                "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_uploads', ?, ?, ?)",
-                (json.dumps(payload), now, now),
+                "INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('local_uploads', ?, ?, ?, ?)",
+                (json.dumps(payload), now, now, user["company_id"]),
             )
             connection.commit()
             record_id = cursor.lastrowid
@@ -1894,7 +2973,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
         with DB_LOCK, connect_database() as connection:
-            distribution = local_record(connection, "distributions", int(distribution_id))
+            distribution = local_record(connection, "distributions", int(distribution_id), user["company_id"])
         if distribution is None:
             self.send_json({"error": "Local assignment not found."}, HTTPStatus.NOT_FOUND)
             return
@@ -1916,8 +2995,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         }
         with DB_LOCK, connect_database() as connection:
             cursor = connection.execute(
-                "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_evidence', ?, ?, ?)",
-                (json.dumps(payload), now, now),
+                "INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('local_evidence', ?, ?, ?, ?)",
+                (json.dumps(payload), now, now, user["company_id"]),
             )
             connection.commit()
         self.write_audit(user, "evidence_uploaded", "local_evidence", cursor.lastrowid, f"Evidence attached to assignment {distribution_id}")
@@ -1926,8 +3005,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             HTTPStatus.CREATED,
         )
 
-    def form_definition_for_assignment(self, connection, distribution):
-        rows = connection.execute("SELECT * FROM records WHERE resource = 'forms'").fetchall()
+    def form_definition_for_assignment(self, connection, distribution, company_id: int):
+        rows = connection.execute("SELECT * FROM records WHERE resource = 'forms' AND company_id = ?", (company_id,)).fetchall()
         wanted = str(distribution.get("form", "")).strip().casefold()
         for row in rows:
             record = row_to_record(row)
@@ -1950,11 +3029,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "A local assignment, valid status, and answer list are required."}, HTTPStatus.BAD_REQUEST)
             return
         with DB_LOCK, connect_database() as connection:
-            distribution = local_record(connection, "distributions", int(distribution_id))
+            distribution = local_record(connection, "distributions", int(distribution_id), user["company_id"])
             if distribution is None:
                 self.send_json({"error": "Local assignment not found."}, HTTPStatus.NOT_FOUND)
                 return
-            form_record = self.form_definition_for_assignment(connection, distribution)
+            form_record = self.form_definition_for_assignment(connection, distribution, user["company_id"])
             if form_record is None:
                 self.send_json({"error": "The assignment form definition is unavailable."}, HTTPStatus.CONFLICT)
                 return
@@ -1992,8 +3071,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if safe_attachment_ids:
                 placeholders = ",".join("?" for _ in safe_attachment_ids)
                 rows = connection.execute(
-                    f"SELECT * FROM records WHERE resource = 'local_evidence' AND id IN ({placeholders})",
-                    safe_attachment_ids,
+                    f"SELECT * FROM records WHERE resource = 'local_evidence' AND company_id = ? AND id IN ({placeholders})",
+                    [user["company_id"], *safe_attachment_ids],
                 ).fetchall()
                 evidence = [
                     row_to_record(row)
@@ -2038,27 +3117,27 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 record_payload["report_file"] = report_name
             existing = None
             if str(submission_id).isdigit():
-                existing = local_record(connection, "local_submissions", int(submission_id))
+                existing = local_record(connection, "local_submissions", int(submission_id), user["company_id"])
                 if existing and existing.get("distribution_id") != int(distribution_id):
                     existing = None
             if existing:
                 record_id = int(submission_id)
                 connection.execute(
-                    "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_submissions' AND id = ?",
-                    (json.dumps(record_payload), now, record_id),
+                    "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_submissions' AND id = ? AND company_id = ?",
+                    (json.dumps(record_payload), now, record_id, user["company_id"]),
                 )
             else:
                 cursor = connection.execute(
-                    "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_submissions', ?, ?, ?)",
-                    (json.dumps(record_payload), now, now),
+                    "INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('local_submissions', ?, ?, ?, ?)",
+                    (json.dumps(record_payload), now, now, user["company_id"]),
                 )
                 record_id = cursor.lastrowid
             if status == "submitted":
                 distribution_payload = {key: value for key, value in distribution.items() if key not in {"id", "_read_only", "created_at", "updated_at"}}
                 distribution_payload.update({"status": "Submitted", "submitted_date": now[:10], "submission_id": record_id})
                 connection.execute(
-                    "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'distributions' AND id = ?",
-                    (json.dumps(distribution_payload), now, int(distribution_id)),
+                    "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'distributions' AND id = ? AND company_id = ?",
+                    (json.dumps(distribution_payload), now, int(distribution_id), user["company_id"]),
                 )
             connection.commit()
         action = "submission_finalized" if status == "submitted" else "submission_draft_saved"
@@ -2092,7 +3171,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         certificate_number = f"KMP-{datetime.now(UTC):%Y%m%d}-{secrets.token_hex(4).upper()}"
         verification_token = secrets.token_urlsafe(18)
         verification_url = f"{self.application_base_url()}/verify/{verification_token}"
-        settings = application_settings()
+        settings = application_settings(int(user["company_id"]))
         certificate_root = DATA_ROOT / "certificates"
         certificate_root.mkdir(parents=True, exist_ok=True)
         stored_name = f"induction-{secrets.token_hex(12)}.pdf"
@@ -2127,18 +3206,18 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         }
         with DB_LOCK, connect_database() as connection:
             cursor = connection.execute(
-                "INSERT INTO records(resource, payload, created_at, updated_at) VALUES ('local_induction_completions', ?, ?, ?)",
-                (json.dumps(record_payload), completed_at, completed_at),
+                "INSERT INTO records(resource, payload, created_at, updated_at, company_id) VALUES ('local_induction_completions', ?, ?, ?, ?)",
+                (json.dumps(record_payload), completed_at, completed_at, user["company_id"]),
             )
             record_id = cursor.lastrowid
             if str(replaces_id).isdigit():
-                previous = local_record(connection, "local_induction_completions", int(replaces_id))
+                previous = local_record(connection, "local_induction_completions", int(replaces_id), user["company_id"])
                 if previous:
                     previous_payload = {key: value for key, value in previous.items() if key not in {"id", "_read_only", "created_at", "updated_at"}}
                     previous_payload.update({"status": "Replaced", "replaced_by": record_id, "replaced_at": completed_at})
                     connection.execute(
-                        "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_induction_completions' AND id = ?",
-                        (json.dumps(previous_payload), completed_at, int(replaces_id)),
+                        "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_induction_completions' AND id = ? AND company_id = ?",
+                        (json.dumps(previous_payload), completed_at, int(replaces_id), user["company_id"]),
                     )
             connection.commit()
         self.write_audit(user, "certificate_generated", "local_induction_completions", record_id, f"Certificate generated for {worker}")
@@ -2159,7 +3238,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
-            record = local_record(connection, "local_induction_completions", record_id)
+            record = local_record(connection, "local_induction_completions", record_id, user["company_id"])
             if record is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -2169,15 +3248,16 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             updated = {key: value for key, value in record.items() if key not in {"id", "_read_only", "created_at", "updated_at"}}
             updated.update({"status": "Revoked", "revoked_at": now, "revocation_reason": reason})
             connection.execute(
-                "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_induction_completions' AND id = ?",
-                (json.dumps(updated), now, record_id),
+                "UPDATE records SET payload = ?, updated_at = ? WHERE resource = 'local_induction_completions' AND id = ? AND company_id = ?",
+                (json.dumps(updated), now, record_id, user["company_id"]),
             )
             connection.commit()
         self.write_audit(user, "certificate_revoked", "local_induction_completions", record_id, reason)
         self.send_json({"id": record_id, **updated})
 
     def compliance_reminder_data(self, days: int):
-        return build_compliance_reminder_data(days)
+        company_id = int(getattr(self, "request_user", {}).get("company_id", 1))
+        return build_compliance_reminder_data(days, company_id)
 
     def handle_compliance_reminders(self, query: str) -> None:
         params = parse_qs(query)
@@ -2194,7 +3274,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
         days = min(max(int(payload.get("days", 30)), 1), 365)
-        result = prepare_compliance_notifications(days)
+        result = prepare_compliance_notifications(days, int(user.get("company_id", 1)))
         self.write_audit(
             user,
             "notifications_prepared",
@@ -2253,6 +3333,58 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path == "/api/auth/status":
             self.handle_auth_status()
             return
+        if path == "/api/public/companies":
+            self.handle_public_companies()
+            return
+        if path == "/api/worker/status":
+            self.handle_worker_status()
+            return
+        if path == "/api/worker/verify":
+            self.handle_worker_verify(parsed.query)
+            return
+        if path == "/api/v1/shared-workers":
+            self.handle_api_shared_workers()
+            return
+        if path.startswith("/api/v1/workers/"):
+            self.handle_api_worker_resource(path)
+            return
+        if path in {"/worker", "/worker/"}:
+            self.send_file(STATIC_ROOT / "worker.html")
+            return
+        if path.startswith("/worker-static/"):
+            self.send_file(STATIC_ROOT / path.removeprefix("/worker-static/"), cache=True)
+            return
+        if path.startswith("/worker/public/"):
+            self.handle_public_worker_profile(path.removeprefix("/worker/public/").strip("/"))
+            return
+        if path.startswith("/worker/share/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 5 and parts[:2] == ["worker", "share"] and parts[2] and parts[3] == "documents" and parts[4].isdigit():
+                self.handle_public_shared_document(parts[2], int(parts[4]))
+            elif len(parts) == 3:
+                self.handle_public_worker_share(parts[2])
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if path.startswith("/api/worker/"):
+            worker = self.require_worker()
+            if worker is None:
+                return
+            if path == "/api/worker/documents":
+                self.handle_worker_documents_get(worker)
+                return
+            if path == "/api/worker/shares":
+                self.handle_worker_shares_get(worker)
+                return
+            if path == "/api/worker/qr":
+                self.handle_worker_qr(worker)
+                return
+            worker_document = path.strip("/").split("/")
+            if len(worker_document) == 5 and worker_document[:3] == ["api", "worker", "documents"] and worker_document[3].isdigit() and worker_document[4] == "file":
+                self.handle_worker_document_file(worker, int(worker_document[3]))
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
         if path.startswith("/verify/"):
             token = path.removeprefix("/verify/").strip("/")
             self.handle_public_certificate(token)
@@ -2267,14 +3399,35 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path in {"/favicon.ico", "/favicon.svg"}:
             self.send_file(STATIC_ROOT / "favicon.svg", cache=True)
             return
+        if path == "/archive/static-assets/logo.svg":
+            self.send_file(ARCHIVE_ROOT / "static-assets" / "logo.svg", cache=True)
+            return
         if path.startswith("/api/") or path.startswith("/archive/") or path.startswith("/examples/") or path.startswith("/local-files/"):
-            if self.require_user() is None:
+            request_user = self.require_user()
+            if request_user is None:
+                return
+            self.request_user = request_user
+            if request_user.get("company_id") != 1 and (path == "/api/archive" or path.startswith("/archive/") or path.startswith("/examples/")):
+                self.send_json({"error": "This tenant has no imported source archive."}, HTTPStatus.FORBIDDEN)
                 return
         if path == "/api/audit":
             self.handle_audit(parsed.query)
             return
         if path == "/api/users":
             self.handle_users_get()
+            return
+        if path == "/api/companies":
+            self.handle_companies_get(self.request_user)
+            return
+        if path == "/api/company/shared-workers":
+            self.handle_company_shared_workers(self.request_user)
+            return
+        if path == "/api/company/api-tokens":
+            self.handle_company_api_tokens_get(self.request_user)
+            return
+        company_document = path.strip("/").split("/")
+        if len(company_document) == 5 and company_document[:3] == ["api", "company", "worker-documents"] and company_document[3].isdigit() and company_document[4] == "file":
+            self.handle_company_document_file(self.request_user, int(company_document[3]))
             return
         if path == "/api/settings":
             settings_user = self.require_user()
@@ -2311,7 +3464,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if len(parts) != 2 or parts[0] not in {"uploads", "certificates", "evidence", "reports"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            self.send_local_file(parts[0], parts[1])
+            self.send_local_file(parts[0], parts[1], int(self.request_user["company_id"]))
             return
         self.send_file(STATIC_ROOT / "index.html")
 
@@ -2335,6 +3488,37 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/auth/recovery/reset":
             self.handle_auth_recovery_reset()
             return
+        if parsed.path == "/api/worker/register":
+            self.handle_worker_register()
+            return
+        if parsed.path == "/api/worker/login":
+            self.handle_worker_login()
+            return
+        if parsed.path == "/api/worker/recovery/request":
+            self.handle_worker_recovery_request()
+            return
+        if parsed.path == "/api/worker/recovery/reset":
+            self.handle_worker_recovery_reset()
+            return
+        if parsed.path.startswith("/api/worker/"):
+            worker = self.require_worker()
+            if worker is None or not self.require_worker_csrf(worker):
+                return
+            if parsed.path == "/api/worker/logout":
+                self.handle_worker_logout(worker)
+                return
+            if parsed.path == "/api/worker/documents":
+                self.handle_worker_document_upload(worker)
+                return
+            if parsed.path == "/api/worker/shares":
+                self.handle_worker_share_create(worker)
+                return
+            share_parts = parsed.path.strip("/").split("/")
+            if len(share_parts) == 5 and share_parts[:3] == ["api", "worker", "shares"] and share_parts[3].isdigit() and share_parts[4] == "revoke":
+                self.handle_worker_share_revoke(worker, int(share_parts[3]))
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
         user = self.require_user({"editor", "admin"})
         if user is None or not self.require_csrf(user):
             return
@@ -2344,6 +3528,31 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
                 return
             self.handle_users_create(user)
+            return
+        if parsed.path == "/api/companies":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_company_create(user)
+            return
+        if parsed.path == "/api/company/api-tokens":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_company_api_token_create(user)
+            return
+        company_parts = parsed.path.strip("/").split("/")
+        if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "shared-workers"] and company_parts[3].isdigit() and company_parts[4] == "import":
+            self.handle_company_import_worker(user, int(company_parts[3]))
+            return
+        if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "worker-documents"] and company_parts[3].isdigit() and company_parts[4] == "review":
+            self.handle_company_document_review(user, int(company_parts[3]))
+            return
+        if len(company_parts) == 5 and company_parts[:3] == ["api", "company", "api-tokens"] and company_parts[3].isdigit() and company_parts[4] == "revoke":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_company_api_token_revoke(user, int(company_parts[3]))
             return
         user_match = parsed.path.strip("/").split("/")
         if len(user_match) == 4 and user_match[:2] == ["api", "users"] and user_match[2].isdigit():
@@ -2402,6 +3611,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/worker/profile":
+            worker = self.require_worker()
+            if worker is not None and self.require_worker_csrf(worker):
+                self.handle_worker_profile_update(worker)
+            return
         user = self.require_user({"editor", "admin"})
         if user is None or not self.require_csrf(user):
             return
@@ -2426,6 +3640,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
+        worker_parts = parsed.path.strip("/").split("/")
+        if len(worker_parts) == 4 and worker_parts[:3] == ["api", "worker", "documents"] and worker_parts[3].isdigit():
+            worker = self.require_worker()
+            if worker is not None and self.require_worker_csrf(worker):
+                self.handle_worker_document_delete(worker, int(worker_parts[3]))
+            return
         user = self.require_user({"admin"})
         if user is None or not self.require_csrf(user):
             return
@@ -2452,19 +3672,21 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             "risk_assessment",
             "inductions",
         ]
+        company_id = int(getattr(self, "request_user", {}).get("company_id", 1))
         with DB_LOCK, connect_database() as connection:
             counts = {
                 resource: connection.execute(
-                    "SELECT COUNT(*) FROM records WHERE resource = ?",
-                    (resource,),
+                    "SELECT COUNT(*) FROM records WHERE resource = ? AND company_id = ?",
+                    (resource, company_id),
                 ).fetchone()[0]
                 for resource in resources
             }
             pending_workers = connection.execute(
                 """
                 SELECT payload FROM records
-                WHERE resource = 'workers'
+                WHERE resource = 'workers' AND company_id = ?
                 """
+                , (company_id,)
             ).fetchall()
         counts["unapproved_workers"] = sum(
             1
@@ -2480,12 +3702,13 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             "ga2_manual": "ga2-manual",
             "ga3_manual": "ga3-manual",
         }
-        for resource, folder in archive_categories.items():
-            archive_folder = ARCHIVE_ROOT / f"pdfs-{folder}"
-            if archive_folder.exists():
-                counts[resource] = sum(
-                    1 for item in archive_folder.glob("*.pdf") if item.is_file()
-                )
+        if company_id == 1:
+            for resource, folder in archive_categories.items():
+                archive_folder = ARCHIVE_ROOT / f"pdfs-{folder}"
+                if archive_folder.exists():
+                    counts[resource] = sum(
+                        1 for item in archive_folder.glob("*.pdf") if item.is_file()
+                    )
         self.send_json(counts)
 
     def handle_resource_get(self, path: str, query: str) -> None:
@@ -2496,12 +3719,13 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         resource = clean_resource(parts[0])
         record_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        company_id = int(getattr(self, "request_user", {}).get("company_id", 1))
 
         with DB_LOCK, connect_database() as connection:
             if record_id is not None:
                 row = connection.execute(
-                    "SELECT * FROM records WHERE resource = ? AND id = ?",
-                    (resource, record_id),
+                    "SELECT * FROM records WHERE resource = ? AND id = ? AND company_id = ?",
+                    (resource, record_id, company_id),
                 ).fetchone()
                 if row is None:
                     self.send_error(HTTPStatus.NOT_FOUND)
@@ -2516,10 +3740,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             rows = connection.execute(
                 """
                 SELECT * FROM records
-                WHERE resource = ?
+                WHERE resource = ? AND company_id = ?
                 ORDER BY id DESC
                 """,
-                (resource,),
+                (resource, company_id),
             ).fetchall()
         records = [
             attach_archive_documents(resource, row_to_record(row))
@@ -2563,13 +3787,14 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             )
             return
         now = utc_now()
+        company_id = int(getattr(self, "request_user", {}).get("company_id", 1))
         with DB_LOCK, connect_database() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO records(resource, payload, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO records(resource, payload, created_at, updated_at, company_id)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (resource, json.dumps(payload), now, now),
+                (resource, json.dumps(payload), now, now, company_id),
             )
             connection.commit()
             record_id = cursor.lastrowid
@@ -2599,6 +3824,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         resource = clean_resource(parts[0])
         record_id = int(parts[1])
+        company_id = int(getattr(self, "request_user", {}).get("company_id", 1))
         try:
             payload = self.read_json_body()
         except (ValueError, json.JSONDecodeError) as error:
@@ -2611,8 +3837,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
             existing = connection.execute(
-                "SELECT payload FROM records WHERE resource = ? AND id = ?",
-                (resource, record_id),
+                "SELECT payload FROM records WHERE resource = ? AND id = ? AND company_id = ?",
+                (resource, record_id, company_id),
             ).fetchone()
             if existing is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -2632,9 +3858,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 """
                 UPDATE records
                 SET payload = ?, updated_at = ?
-                WHERE resource = ? AND id = ?
+                WHERE resource = ? AND id = ? AND company_id = ?
                 """,
-                (json.dumps(payload), now, resource, record_id),
+                (json.dumps(payload), now, resource, record_id, company_id),
             )
             connection.commit()
         self.send_json(
@@ -2656,10 +3882,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         resource = clean_resource(parts[0])
         record_id = int(parts[1])
+        company_id = int(getattr(self, "request_user", {}).get("company_id", 1))
         with DB_LOCK, connect_database() as connection:
             existing = connection.execute(
-                "SELECT payload FROM records WHERE resource = ? AND id = ?",
-                (resource, record_id),
+                "SELECT payload FROM records WHERE resource = ? AND id = ? AND company_id = ?",
+                (resource, record_id, company_id),
             ).fetchone()
             if existing is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -2676,8 +3903,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 )
                 return
             cursor = connection.execute(
-                "DELETE FROM records WHERE resource = ? AND id = ?",
-                (resource, record_id),
+                "DELETE FROM records WHERE resource = ? AND id = ? AND company_id = ?",
+                (resource, record_id, company_id),
             )
             connection.commit()
         self.send_json({"deleted": True, "id": record_id})

@@ -4,8 +4,8 @@ Assessment date: 22 July 2026
 
 ## Executive status
 
-- Current single-company customer pilot: approximately **85% complete**.
-- Full multi-company platform described in Marcelo's notes: approximately **40–45% complete**.
+- Current single-company customer pilot: approximately **90% complete**.
+- Full multi-company platform described in Marcelo's notes: approximately **55–60% complete**.
 - Production remains on hold pending pilot sign-off, release approval, backup references and a rollback commit.
 
 The current product is a secured operations clone using one authorised customer snapshot plus isolated local workflows. Marcelo's document expands this into a multi-tenant worker identity and compliance network. Those are different delivery milestones.
@@ -14,18 +14,25 @@ The current product is a secured operations clone using one authorised customer 
 
 | Module | Estimate | Implemented | Principal gaps |
 |---|---:|---|---|
-| 1. Universal Worker Profile | 20% | Worker records, contact/training/Safe Pass views, application password recovery | Worker self-registration/account, mobile authentication, complete employment/skills/medical profile, worker QR, consented company sharing/revocation, external API, multi-company relationships, multilingual UI |
-| 2. Document Management | 65% | Imported document libraries, PDF/image viewing, downloads, local version uploads, evidence, expiry states, reminders | Drag/drop multi-upload with progress, structured worker/company document ownership, replacement/deletion UI for local documents, automatic expiry extraction |
-| 3. Compliance & Workflow | 40% | Forms/drafts/signatures/evidence/reports, certificate verification/revocation, expiry centre, email queue/retries, audit and roles | Internal messaging, requests, department routing, SMS/push/preferences, unread/viewed review state, supervisor document review, induction approval/decline/comments/history |
+| 1. Universal Worker Profile | 80% | Free self-registration, email verification/recovery, editable complete profile, worker QR/public profile, field-level company consent/revocation, tenant relationships/import, revocable audited REST API, English/Portuguese/Spanish preference architecture | Approved SMS/mobile OTP provider, camera-based QR scanner/request handshake, full translation of every company screen, formal OpenAPI/client SDK |
+| 2. Document Management | 78% | Imported libraries, PDF/image viewing/download, worker-owned categories, drag/drop multi-upload/progress, validation, preview/delete, automatic versions, expiry colours/reminders, tenant document review | Automatic expiry extraction from document content, company plant/equipment/site ownership refinements, visual version-history grouping |
+| 3. Compliance & Workflow | 48% | Forms/drafts/signatures/evidence/reports, certificate verification/revocation, expiry centre, email queue/retries, audit/roles, per-company worker-document review/approval history | Internal messaging, requests, department routing, SMS/push/preferences, induction approval/decline/comments/additional-information/history |
 | 4. Responsive UI | 90% | Responsive navigation, dashboards, tables, forms, document viewers, desktop/mobile workflow checks | Exhaustive tablet/device accessibility and touch acceptance across every mapped route |
 | 5. Demo Environment | 5% | Data boundaries and governance documentation | Separate fictional dataset, redacted/sample files, watermarking, automated PII scan and public-demo approval |
-| 6. Data Migration | 40% | One customer snapshot with 3,597 immutable records and preserved source files/relationships | Repeatable per-client extract-transform-import pipeline, tenant mapping, reconciliation reports, additional authorised clients such as Grandbrind |
-| 7. Business Outcomes | 30% | Reduced repeated entry inside local form workflows, centralised single-company operations, expiry visibility | Shared worker network, cross-company onboarding, third-party REST API, consent lifecycle, internationalisation and adoption tooling |
+| 6. Data Migration | 45% | One customer snapshot with 3,597 immutable records, preserved files/relationships and isolated tenant targets | Repeatable per-client extract-transform-import pipeline, reconciliation reports, additional authorised clients such as Grandbrind |
+| 7. Business Outcomes | 55% | Reduced repeated entry, central operations, expiry visibility, consented cross-company worker import, QR identity and third-party REST access | Production network adoption, complete internationalisation, provider-backed mobile authentication and customer onboarding operations |
 
 ## Release-candidate work completed
 
 - Immutable imported snapshot and isolated local writable records.
-- Future snapshot refresh replaces only protected imported rows and preserves local pilot records.
+- Fresh-volume snapshot import is append-once; startup never replaces or deletes protected rows.
+- Company tenant, tenant-scoped users/settings/records/audits and protected archive boundary.
+- Worker self-registration, verification, password recovery, lockout and secure sessions.
+- Editable worker passports, unique QR profiles and initial English/Portuguese/Spanish preference wiring.
+- Worker-owned versioned documents with drag/drop multi-upload, progress, preview, delete and expiry colours.
+- Field-level company consent, secure links, immediate revocation and tenant workforce import/refresh.
+- Per-company document view/approval/decline history.
+- Revocable integration tokens and audited REST resources for profiles, certifications, documents, inductions and training.
 - Administrator/editor/viewer authentication, CSRF, session revocation and audit history.
 - Failed-login lockout, one-time password reset and recovery-request throttling.
 - Real-definition form assignment, draft/resume, signatures, evidence, validation and multipage PDF reports.
@@ -46,13 +53,13 @@ The current product is a secured operations clone using one authorised customer 
 4. Fix pilot defects, record backup/rollback references and obtain release approval.
 5. Deploy the approved commit and run the production smoke test.
 
-### Milestone B — Universal worker foundation
+### Milestone B — Universal worker foundation (implemented locally)
 
-1. Introduce tenant/company, worker-account and company-worker relationship tables.
-2. Build worker self-registration and account verification.
-3. Build the complete editable worker profile and document ownership model.
-4. Add worker QR/secure-link access with explicit consent grants and revocation.
-5. Publish versioned, scoped REST API endpoints and API audit records.
+1. Complete provider/legal choice for SMS OTP; email verification is implemented.
+2. Add camera-based QR scan and company access-request/worker-approval handshake.
+3. Translate the full company application; the worker surface has the initial language preference/dictionary architecture.
+4. Publish an OpenAPI contract, pagination/rate limits and client SDK after the integration contract is approved.
+5. Run tenant penetration/privacy testing before any multi-company production launch.
 
 This milestone must precede cross-company import, messaging and network adoption work.
 

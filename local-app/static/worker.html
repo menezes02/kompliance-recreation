@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#087863">
+  <title>Kompliance Worker</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/worker-static/worker.css?v=2">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/worker/"><span>K</span><strong>Kompliance Worker</strong></a>
+    <div class="header-tools"><label class="language"><span>Language</span><select id="language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label><button id="logout" class="ghost hidden" type="button">Sign out</button></div>
+  </header>
+  <main>
+    <section id="notice" class="notice hidden" role="status"></section>
+    <section id="auth-view" class="auth-grid">
+      <article class="hero">
+        <p class="eyebrow">One profile. Your control.</p>
+        <h1>Carry your safety record from site to site.</h1>
+        <p>Keep your qualifications and documents together, then choose exactly what each company may see. Revoke access whenever you need to.</p>
+        <ul><li>Secure worker account</li><li>Versioned safety documents</li><li>Company-specific consent</li><li>QR profile sharing</li></ul>
+      </article>
+      <article class="card auth-card">
+        <div class="tabs"><button class="tab active" data-tab="login" type="button">Sign in</button><button class="tab" data-tab="register" type="button">Create account</button></div>
+        <form id="login-form" class="stack">
+          <label>Email<input name="email" type="email" autocomplete="email" required></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary" type="submit">Sign in</button>
+          <button id="show-recovery" class="link" type="button">Forgot password?</button>
+        </form>
+        <form id="register-form" class="stack hidden">
+          <label>Full name<input name="name" autocomplete="name" required></label>
+          <label>Email<input name="email" type="email" autocomplete="email" required></label>
+          <label>Password<input name="password" type="password" minlength="12" autocomplete="new-password" required></label>
+          <p class="hint">Use at least 12 characters.</p>
+          <button class="primary" type="submit">Create worker account</button>
+        </form>
+        <form id="recovery-form" class="stack hidden">
+          <h2>Reset password</h2>
+          <label>Email<input name="email" type="email" required></label>
+          <button class="primary" type="submit">Prepare reset link</button>
+          <button class="link back-login" type="button">Back to sign in</button>
+        </form>
+        <form id="reset-form" class="stack hidden">
+          <h2>Choose a new password</h2>
+          <label>New password<input name="password" type="password" minlength="12" autocomplete="new-password" required></label>
+          <button class="primary" type="submit">Save password</button>
+        </form>
+      </article>
+    </section>
+
+    <section id="app-view" class="hidden">
+      <div class="welcome"><div><p class="eyebrow">Worker passport</p><h1 id="worker-name">Your profile</h1><p id="worker-email"></p></div><img id="worker-qr" alt="QR code for public worker profile"></div>
+      <nav class="section-tabs" aria-label="Worker sections"><button class="section-tab active" data-section="profile" type="button">Profile</button><button class="section-tab" data-section="documents" type="button">Documents</button><button class="section-tab" data-section="sharing" type="button">Sharing & consent</button></nav>
+
+      <section id="section-profile" class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">Identity</p><h2>Worker profile</h2></div><span class="privacy-pill">You control this data</span></div>
+        <form id="profile-form" class="form-grid">
+          <label>Full name<input name="name" required></label><label>Phone<input name="phone" autocomplete="tel"></label>
+          <label>Trade / occupation<input name="trade"></label><label>Preferred language<input name="preferred_language" placeholder="en"></label>
+          <label class="wide">Skills <span>one per line</span><textarea name="skills"></textarea></label>
+          <label class="wide">Qualifications <span>one per line</span><textarea name="qualifications"></textarea></label>
+          <label class="wide">Certifications <span>one per line</span><textarea name="certifications"></textarea></label>
+          <label class="wide">Training records <span>one per line</span><textarea name="training_records"></textarea></label>
+          <label class="wide">Inductions <span>one per line</span><textarea name="inductions"></textarea></label>
+          <label class="wide">Employment history <span>one per line</span><textarea name="employment_history"></textarea></label>
+          <fieldset class="wide"><legend>Fields visible through your QR profile</legend><div id="public-fields" class="checks"></div></fieldset>
+          <div class="wide actions"><button class="primary" type="submit">Save profile</button></div>
+        </form>
+      </section>
+
+      <section id="section-documents" class="panel hidden">
+        <div class="panel-heading"><div><p class="eyebrow">Evidence</p><h2>Documents</h2></div><span class="privacy-pill">10 MB maximum</span></div>
+        <form id="document-form" class="form-grid compact">
+          <label>Category<select name="category" id="document-category"></select></label><label>Title<input name="title" required></label>
+          <label>Expiry date<input name="expiry_date" type="date"></label><label class="drop-zone" id="drop-zone">Files <span>Drop files here or browse</span><input name="file" type="file" multiple required></label>
+          <div class="wide actions"><button class="primary" type="submit">Upload document</button></div>
+        </form>
+        <div id="upload-progress" class="upload-progress hidden"><span></span><progress max="100" value="0"></progress></div>
+        <div id="documents-list" class="cards"></div>
+      </section>
+
+      <section id="section-sharing" class="panel hidden">
+        <div class="panel-heading"><div><p class="eyebrow">Consent</p><h2>Company access</h2></div><span class="privacy-pill">Revocable at any time</span></div>
+        <form id="share-form" class="stack share-form"><label>Company<select name="company_id" id="company-select" required></select></label><fieldset><legend>Choose what this company can see</legend><div id="share-fields" class="checks"></div></fieldset><button class="primary" type="submit">Grant or update access</button></form>
+        <div id="shares-list" class="cards"></div>
+      </section>
+    </section>
+  </main>
+  <footer><a href="/privacy">Privacy</a><span>Worker data is shared only with consent.</span></footer>
+  <script src="/worker-static/worker.js?v=2" defer></script>
+</body>
+</html>

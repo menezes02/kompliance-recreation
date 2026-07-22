@@ -3569,10 +3569,59 @@ function applyAuthContext() {
     ? `${user.role[0].toUpperCase()}${user.role.slice(1)}`
     : "Viewer";
   document.querySelector(".avatar").textContent = firstName[0]?.toUpperCase() || "U";
+  const companyName = user.company_name || "Local Company";
+  const contextCompany = document.querySelector(".sidebar-context strong");
+  if (contextCompany) contextCompany.textContent = companyName;
+  const isSnapshotTenant = Number(user.company_id || 1) === 1;
+  const liveIndicator = document.querySelector(".live-indicator");
+  if (liveIndicator) liveIndicator.innerHTML = `<i></i> ${isSnapshotTenant ? "Production snapshot" : "Isolated tenant"}`;
+  const boundaryCopy = document.querySelector(".sidebar-footer div span");
+  if (boundaryCopy) boundaryCopy.textContent = isSnapshotTenant ? "Production is read-only" : "Company data is isolated";
   document.querySelector("#audit-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#users-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#system-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#source-archive-link")?.classList.toggle("hidden", Number(user.company_id || 1) !== 1);
   document.querySelector("#logout-action")?.classList.toggle("hidden", !state.auth.enabled);
+}
+
+async function renderSharedWorkers() {
+  const user = state.auth.user || {};
+  const [workerResult, tokenResult, companyResult] = await Promise.all([
+    api("/api/company/shared-workers"),
+    user.role === "admin" ? api("/api/company/api-tokens") : Promise.resolve({ data: [] }),
+    user.role === "admin" && user.platform_admin ? api("/api/companies") : Promise.resolve({ data: [] }),
+  ]);
+  const workers = workerResult.data || [];
+  const tokens = tokenResult.data || [];
+  const companies = companyResult.data || [];
+  app.innerHTML = `
+    ${pageHeader("Shared worker passports", "Worker-owned profiles and documents shared with explicit, revocable consent", `<a class="button button-secondary" href="/worker/" target="_blank" rel="noopener">Open worker portal</a>`)}
+    <section class="universal-summary">
+      <article><span>Active consent</span><strong>${workers.length}</strong><small>Workers sharing with this company</small></article>
+      <article><span>Imported locally</span><strong>${workers.filter(worker => worker.imported_at).length}</strong><small>Tenant worker records created</small></article>
+      <article><span>Integration tokens</span><strong>${tokens.filter(token => token.active).length}</strong><small>Revocable API credentials</small></article>
+    </section>
+    <section class="card universal-card">
+      <div class="table-toolbar"><div><span>Consented access</span><h2>Universal workers</h2></div></div>
+      <div class="universal-workers">${workers.length ? workers.map(worker => {
+        const profile = worker.profile || {};
+        const docs = profile.documents || [];
+        return `<article class="universal-worker">
+          <div class="universal-worker-heading"><div><span class="avatar">${escapeHtml(String(profile.name || "W")[0])}</span><div><h3>${escapeHtml(profile.name || "Shared worker")}</h3><p>${escapeHtml(profile.trade || profile.email || "Worker passport")}</p></div></div><span class="status">Active consent</span></div>
+          <dl><div><dt>Shared fields</dt><dd>${worker.visible_fields.map(field => escapeHtml(field.replaceAll("_", " "))).join(", ")}</dd></div><div><dt>Granted</dt><dd>${escapeHtml(displayDate(worker.granted_at) || worker.granted_at)}</dd></div></dl>
+          ${docs.length ? `<div class="universal-documents"><strong>Shared documents</strong>${docs.map(doc => `<div><span>${escapeHtml(doc.title)} · v${doc.version} · ${escapeHtml(doc.review_status)}</span><span><a href="/api/company/worker-documents/${doc.id}/file" target="_blank" rel="noopener">View</a><button type="button" data-doc-review="${doc.id}" data-status="approved">Approve</button><button type="button" data-doc-review="${doc.id}" data-status="declined">Decline</button></span></div>`).join("")}</div>` : ""}
+          <div class="universal-actions"><button class="button button-primary" type="button" data-worker-import="${worker.access_id}">${worker.imported_at ? "Refresh local worker" : "Import to workforce"}</button>${worker.imported_at ? `<small>Last imported ${escapeHtml(displayDate(worker.imported_at) || worker.imported_at)}</small>` : ""}</div>
+        </article>`;
+      }).join("") : `<div class="table-empty">No worker has granted this company access yet. A worker can choose this company from the worker portal.</div>`}</div>
+    </section>
+    ${user.role === "admin" ? `<section class="card universal-card"><div class="local-section-heading"><span>Integration</span><h2>Company API tokens</h2><p>Create a token for read-only access to consented worker profiles. The secret is shown only once.</p></div><form id="api-token-form" class="inline-create"><input name="name" placeholder="Integration name" required><button class="button button-primary">Create token</button></form><div class="token-list">${tokens.map(token => `<div><span><strong>${escapeHtml(token.name)}</strong><small>${token.active ? "Active" : "Revoked"}${token.last_used_at ? ` · used ${escapeHtml(displayDate(token.last_used_at) || token.last_used_at)}` : ""}</small></span>${token.active ? `<button class="button button-danger" data-token-revoke="${token.id}" type="button">Revoke</button>` : ""}</div>`).join("") || `<p class="table-empty">No integration tokens.</p>`}</div></section>` : ""}
+    ${user.role === "admin" && user.platform_admin ? `<section class="card universal-card"><div class="local-section-heading"><span>Platform administration</span><h2>Create an isolated company tenant</h2><p>Each tenant receives a separate administrator, records and consent boundary.</p></div><form id="company-create-form" class="tenant-form"><label>Company name<input name="name" required></label><label>Administrator name<input name="admin_name" required></label><label>Administrator email<input name="admin_email" type="email" required></label><label>Temporary password<input name="admin_password" type="password" minlength="12" required></label><button class="button button-primary">Create company</button></form><p class="tenant-count">${companies.length} tenant${companies.length === 1 ? "" : "s"} configured.</p></section>` : ""}
+  `;
+  document.querySelectorAll("[data-worker-import]").forEach(button => button.addEventListener("click", async () => { try { await api(`/api/company/shared-workers/${button.dataset.workerImport}/import`, { method: "POST", body: "{}" }); showToast("Worker profile imported into this tenant only."); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } }));
+  document.querySelectorAll("[data-doc-review]").forEach(button => button.addEventListener("click", async () => { try { await api(`/api/company/worker-documents/${button.dataset.docReview}/review`, { method: "POST", body: JSON.stringify({ status: button.dataset.status }) }); showToast(`Document marked ${button.dataset.status}.`); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } }));
+  document.querySelector("#api-token-form")?.addEventListener("submit", async event => { event.preventDefault(); try { const result = await api("/api/company/api-tokens", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); window.prompt("Copy this API token now. It will not be shown again.", result.token); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } });
+  document.querySelectorAll("[data-token-revoke]").forEach(button => button.addEventListener("click", async () => { if (!window.confirm("Revoke this API token?")) return; try { await api(`/api/company/api-tokens/${button.dataset.tokenRevoke}/revoke`, { method: "POST", body: "{}" }); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } }));
+  document.querySelector("#company-create-form")?.addEventListener("submit", async event => { event.preventDefault(); try { await api("/api/companies", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); showToast("Isolated company tenant created."); event.currentTarget.reset(); await renderSharedWorkers(); } catch (error) { showToast(error.message, "error"); } });
 }
 
 function renderAuthScreen(setupRequired) {
@@ -3861,6 +3910,8 @@ async function route() {
       await renderAuditLog();
     } else if (path === "/users") {
       await renderUserManagement();
+    } else if (path === "/shared-workers") {
+      await renderSharedWorkers();
     } else if (path === "/system") {
       await renderSystemCentre();
     } else if (path === "/local-workflows") {

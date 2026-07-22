@@ -57,9 +57,10 @@ The deployed database is initialized from:
 `../production-data/records.json`
 
 The snapshot contains 3,597 records exported through authenticated, read-only
-table requests. When its content hash changes, the container replaces the
-previous local snapshot on startup. This operation changes only the cloned
-SQLite database; it never writes to the production Kompliance service.
+table requests. It is imported only when a fresh database has no recorded
+snapshot version. Startup never replaces or deletes protected rows in an
+existing data volume; a different authorised export requires a separately
+reviewed migration into a fresh volume.
 
 Snapshot records are immutable in the local API and interface. They display a
 `Read only` badge and cannot be updated or deleted. Records created locally for
@@ -92,6 +93,14 @@ presentation/action HTML are not stored in the snapshot.
 - GA1 document-set viewer preserving all 180 archived PDF/JPG/JPEG attachments
 - In-app PDF and image previews with explicit open/download fallbacks
 - Read-only universal worker profile foundation for all 286 imported workers
+- Free worker self-registration, email verification/recovery, lockout and secure worker sessions
+- Editable worker passport covering contact, emergency, employment, skills, qualifications, certifications, training, inductions and optional medical details
+- Unique worker QR profiles, secure company-specific links, field-level consent and immediate revocation
+- Isolated company tenants, platform-admin tenant creation and tenant-specific settings/users/records/audits
+- Company consent inbox, local workforce import/refresh, shared document view and per-company approval/decline history
+- Worker-owned versioned documents with drag/drop multi-file upload, progress, validation, expiry colours, preview and delete
+- Revocable company API tokens and audited versioned REST resources for profiles, certifications, training, inductions and documents
+- Worker language preference with initial English, Portuguese and Spanish interface vocabulary
 - Workforce filters for site, role/trade, account state, Safe Pass state and name order
 - Dashboard compliance alerts calculated from GA1 expiry dates and worker Safe Pass indicators
 - RAMS/Risk Assessment filters, calculated expiry status, read-only details and explicit missing-attachment handling for all 125 imported records
@@ -135,10 +144,11 @@ The completed archive contains 2,895 source files (2,725 PDFs, 158 PNG files,
 7 SVG files, and 5 CSS files). The final verification pass completed with zero
 missing files, zero empty files, and zero invalid PDF signatures.
 
-## Reset local sample data
+## Reset an isolated test volume
 
-Stop the server and remove `data/kompliance.db`, then start the server again.
-The seed records will be recreated.
+Only for a disposable development/test volume, stop the server and remove that
+test database before starting again. Never remove or reset the customer pilot
+volume. The authorised snapshot will be imported into a genuinely fresh volume.
 
 ## Pilot boundaries
 

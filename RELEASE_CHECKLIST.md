@@ -37,6 +37,9 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Record the privacy contact, retention period and approved privacy notice.
 - [ ] Keep email and scheduler disabled unless the external-service approval is recorded.
 - [ ] If approved, store SMTP secrets only in the untracked deployment environment and send one controlled test.
+- [ ] Confirm worker email verification is enabled and uses the approved sender/provider.
+- [ ] Store company API tokens only in an approved secret manager; never in Git or logs.
+- [ ] Complete tenant-isolation and consent/revocation security testing before enabling multiple production companies.
 
 ## Deployment
 
@@ -69,6 +72,14 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Password recovery tokens expire, work once, and revoke prior sessions.
 - [ ] Five failed logins lock the account for the configured period.
 - [ ] Audit events appear for authenticated mutations.
+- [ ] Worker registration, verification, login, recovery and logout work.
+- [ ] Worker QR/public fields reveal only the selected public profile fields.
+- [ ] A company sees only fields/documents in its active worker consent grant.
+- [ ] Worker revocation immediately blocks the secure link, company view and REST API.
+- [ ] Company import creates/refreshes only its local tenant worker record.
+- [ ] Tenant A cannot list Tenant B records, users, settings, files, audit events or source archive.
+- [ ] API token creation/read/revocation works and successful reads are audited.
+- [ ] `python -m unittest local-app/test_universal_workers.py -v` passes in a fresh test volume.
 - [ ] No imported source record can be edited or deleted.
 
 ## Rollback trigger and procedure

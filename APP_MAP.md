@@ -15,6 +15,23 @@ Access level observed: customer/company administrator
 - Create and edit pages were opened only to identify their schemas.
 - Public induction registration was viewed only up to the registration form.
 
+## Local platform extensions
+
+These routes belong to the recreated platform and were not used to mutate the
+source application:
+
+| Route | Purpose |
+|---|---|
+| `/worker/` | Worker registration, login, recovery and worker-owned passport |
+| `/worker/public/:token` | Minimal worker-controlled QR profile |
+| `/worker/share/:token` | Revocable company-specific consent link |
+| `/shared-workers` | Company consent inbox, document review and workforce import |
+| `/api/v1/shared-workers` | Bearer-token REST list for active consent grants |
+| `/api/v1/workers/:id/*` | Scoped profile, certification, training, induction and document resources |
+
+All local tenant records are isolated by `company_id`. The authorised source
+snapshot belongs only to the original customer tenant and remains immutable.
+
 ## Application shell
 
 The authenticated application uses a single top navigation bar with:
@@ -692,4 +709,3 @@ These require additional authorized roles, safe test data, or explicit permissio
 7. Implement induction builder, company token/QR entry, registration, page completion, submissions, and certificates.
 8. Add audit logging, role permissions, validation, uploads, email delivery, and background jobs.
 9. Verify responsive behavior and parity against every mapped screen.
-

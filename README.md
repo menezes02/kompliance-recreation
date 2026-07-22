@@ -2,7 +2,7 @@
 
 Private, containerized recreation of the Kompliance health and safety application.
 
-The current release candidate adds real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
+The current release candidate adds a tenant-isolated Universal Worker Foundation, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
 
 The repository contains:
 
@@ -23,6 +23,7 @@ The original production application is treated as read-only. See
 publication, migration, and deployment are defined in `DATA_GOVERNANCE.md`.
 
 Imported snapshot records are immutable in both the local API and interface.
+Startup imports the authorised customer snapshot once into a fresh data volume. A changed export is never used to replace or delete protected rows in an existing volume.
 Production-reading scripts require the acknowledgement and approval-reference
 environment values documented in `.env.example`.
 
@@ -34,6 +35,8 @@ python local-app/server.py
 ```
 
 Then open `http://127.0.0.1:8090/`.
+
+Worker self-registration is available at `http://127.0.0.1:8090/worker/`. The company application exposes consented profiles at `/shared-workers`. REST integration details are in `UNIVERSAL_WORKER_API.md`.
 
 Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
 

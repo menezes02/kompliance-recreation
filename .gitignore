@@ -6,6 +6,7 @@ deployment/htpasswd
 
 # Runtime state
 local-app/data/
+.test-data-*/
 *.db
 *.db-shm
 *.db-wal
@@ -25,4 +26,3 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
-

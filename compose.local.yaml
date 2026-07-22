@@ -12,6 +12,7 @@ services:
       KOMPLIANCE_APP_AUTH: "1"
       KOMPLIANCE_SCHEDULER: "0"
       KOMPLIANCE_EMAIL_DELIVERY: "0"
+      KOMPLIANCE_WORKER_EMAIL_VERIFICATION: "0"
     ports:
       - "127.0.0.1:18090:8090"
     volumes:
