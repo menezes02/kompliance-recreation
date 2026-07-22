@@ -86,15 +86,59 @@ def exchange_code(client_id: str, client_secret: str, code: str, verifier: str, 
         return json.loads(response.read().decode())
 
 
+def write_environment(output: Path | None, sender: str, client_id: str, client_secret: str, refresh_token: str) -> None:
+    lines = [
+        "KOMPLIANCE_EMAIL_PROVIDER=gmail_oauth",
+        f"KOMPLIANCE_SMTP_FROM={sender}",
+        f"KOMPLIANCE_GMAIL_CLIENT_ID={client_id}",
+        f"KOMPLIANCE_GMAIL_CLIENT_SECRET={client_secret}",
+        f"KOMPLIANCE_GMAIL_REFRESH_TOKEN={refresh_token}",
+    ]
+    block = "\n".join(lines) + "\n"
+    if output:
+        output.write_text(block, encoding="utf-8")
+        output.chmod(0o600)
+        print(f"OAuth environment block written to {output.resolve()}")
+        print("Keep that file untracked and restrict access to your Windows account.")
+    else:
+        print("\nCopy these values directly into the untracked deployment .env, then clear this terminal:")
+        print(block)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Authorize Kompliance to send Gmail messages")
     parser.add_argument("client_json", type=Path, help="Downloaded Google OAuth Desktop client JSON")
     parser.add_argument("--sender", default="", help="Gmail sender address for the generated environment block")
     parser.add_argument("--output", type=Path, help="Explicit untracked file to receive the environment block")
     parser.add_argument("--no-browser", action="store_true", help="Print the consent URL instead of opening it")
+    parser.add_argument("--timeout", type=int, default=300, help="Seconds to wait for the local OAuth callback")
+    parser.add_argument("--session-file", type=Path, help="Private resumable PKCE session file")
+    parser.add_argument("--complete-url-file", type=Path, help="File containing a returned Google callback URL")
     args = parser.parse_args()
 
     client_id, client_secret = load_client(args.client_json)
+    if args.complete_url_file:
+        if not args.session_file or not args.session_file.is_file():
+            raise ValueError("--complete-url-file requires an existing --session-file")
+        session = json.loads(args.session_file.read_text(encoding="utf-8"))
+        callback_url = args.complete_url_file.read_text(encoding="utf-8").strip()
+        callback = urllib.parse.parse_qs(urllib.parse.urlparse(callback_url).query)
+        if callback.get("state", [""])[0] != session.get("state"):
+            raise ValueError("OAuth callback state validation failed")
+        code = callback.get("code", [""])[0]
+        if not code:
+            raise ValueError("OAuth callback contains no authorization code")
+        tokens = exchange_code(client_id, client_secret, code, session["verifier"], session["redirect_uri"])
+        refresh_token = str(tokens.get("refresh_token", "")).strip()
+        if not refresh_token:
+            raise RuntimeError("Google returned no refresh token; revoke the prior grant and try again")
+        write_environment(args.output, args.sender, client_id, client_secret, refresh_token)
+        args.session_file.write_text(json.dumps({"completed": True}), encoding="utf-8")
+        args.session_file.chmod(0o600)
+        args.complete_url_file.write_text(json.dumps({"completed": True}), encoding="utf-8")
+        args.complete_url_file.chmod(0o600)
+        return 0
+
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
@@ -102,6 +146,12 @@ def main() -> int:
     OAuthCallbackHandler.result = {}
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), OAuthCallbackHandler)
     redirect_uri = f"http://127.0.0.1:{server.server_port}/"
+    if args.session_file:
+        args.session_file.write_text(
+            json.dumps({"state": state, "verifier": verifier, "redirect_uri": redirect_uri}),
+            encoding="utf-8",
+        )
+        args.session_file.chmod(0o600)
     query = urllib.parse.urlencode(
         {
             "client_id": client_id,
@@ -122,11 +172,11 @@ def main() -> int:
         print(f"Open this URL in your browser:\n{authorization_url}")
     thread = threading.Thread(target=server.handle_request, daemon=True)
     thread.start()
-    thread.join(timeout=300)
+    thread.join(timeout=max(60, min(args.timeout, 1800)))
     server.server_close()
     result = OAuthCallbackHandler.result
     if not result:
-        raise TimeoutError("No OAuth callback was received within five minutes")
+        raise TimeoutError("No OAuth callback was received before the configured timeout")
     if result.get("error"):
         raise RuntimeError(f"Google authorization failed: {result['error']}")
     tokens = exchange_code(client_id, client_secret, result.get("code", ""), verifier, redirect_uri)
@@ -134,21 +184,10 @@ def main() -> int:
     if not refresh_token:
         raise RuntimeError("Google returned no refresh token; revoke the prior grant and try again")
 
-    lines = [
-        "KOMPLIANCE_EMAIL_PROVIDER=gmail_oauth",
-        f"KOMPLIANCE_SMTP_FROM={args.sender}",
-        f"KOMPLIANCE_GMAIL_CLIENT_ID={client_id}",
-        f"KOMPLIANCE_GMAIL_CLIENT_SECRET={client_secret}",
-        f"KOMPLIANCE_GMAIL_REFRESH_TOKEN={refresh_token}",
-    ]
-    block = "\n".join(lines) + "\n"
-    if args.output:
-        args.output.write_text(block, encoding="utf-8")
-        print(f"OAuth environment block written to {args.output.resolve()}")
-        print("Keep that file untracked and restrict access to your Windows account.")
-    else:
-        print("\nCopy these values directly into the untracked deployment .env, then clear this terminal:")
-        print(block)
+    write_environment(args.output, args.sender, client_id, client_secret, refresh_token)
+    if args.session_file:
+        args.session_file.write_text(json.dumps({"completed": True}), encoding="utf-8")
+        args.session_file.chmod(0o600)
     return 0
 
 
