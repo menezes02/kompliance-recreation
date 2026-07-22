@@ -43,6 +43,7 @@ Then open `http://127.0.0.1:8090/`.
 Worker self-registration is available at `http://127.0.0.1:8090/worker/`. The company application exposes QR requests and consented profiles at `/shared-workers`. See `QR_ACCESS_REQUESTS.md` for the approval lifecycle and `UNIVERSAL_WORKER_API.md` for REST integration. The OpenAPI 3.1 contract is served at `/api/openapi.json`.
 
 Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
+The controlled customer test path is documented in `PILOT_TEST_HANDOFF.md`, with formal sign-off in `PILOT_ACCEPTANCE_CHECKLIST.md`.
 
 ## Docker deployment
 
@@ -51,6 +52,7 @@ project uses these fixed resource names:
 
 - `kompliance_app_example`
 - `kompliance_gateway_example`
+- `kompliance_operations_example`
 - `kompliance_data_example`
 
 ```powershell

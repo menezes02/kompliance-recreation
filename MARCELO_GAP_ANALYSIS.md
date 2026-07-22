@@ -4,9 +4,9 @@ Assessment date: 22 July 2026
 
 ## Executive status
 
-- Current single-company customer pilot: approximately **90% complete**.
-- Full multi-company platform described in Marcelo's notes: approximately **76–80% complete**.
-- Production remains on hold pending pilot sign-off, release approval, backup references and a rollback commit.
+- Current single-company customer pilot: approximately **95% complete** and deployed for acceptance testing.
+- Full multi-company platform described in Marcelo's notes: approximately **80% complete**.
+- The private pilot is live. Commercial release remains conditional on customer sign-off, approved notification providers, privacy/legal review and operational ownership.
 
 The current product is a secured operations clone using one authorised customer snapshot plus isolated local workflows. Marcelo's document expands this into a multi-tenant worker identity and compliance network. Those are different delivery milestones.
 
@@ -52,20 +52,20 @@ The current product is a secured operations clone using one authorised customer 
 
 ## Recommended delivery sequence
 
-### Milestone A — Finish and pilot the current single-company release
+### Milestone A — Customer acceptance of the deployed single-company release
 
-1. Repair/start a working Docker engine and execute the clean-container smoke test.
+1. Completed: clean-container validation, production deployment and live HTTPS smoke testing.
 2. Complete the pilot acceptance checklist with the company user.
-3. Approve branding, privacy contact, retention period and SMTP provider/recipients.
-4. Fix pilot defects, record backup/rollback references and obtain release approval.
-5. Deploy the approved commit and run the production smoke test.
+3. Approve the privacy contact, retention period and future SMTP provider/recipients.
+4. Fix any customer-reported pilot defects and obtain named release approval.
+5. Enrol administrator MFA and record the customer acceptance decision.
 
 ### Milestone B — Universal worker foundation (implemented locally)
 
 1. Complete provider/legal choice for SMS OTP; email verification is implemented.
 2. Implemented locally: camera/manual QR scan and company access-request/worker-approval handshake.
 3. In progress: expanded company and worker translation catalogue; native-speaker review and rare/error states remain.
-4. OpenAPI contract implemented; pagination, rate limits and client SDK remain after integration approval.
+4. OpenAPI contract, pagination and rate limits are implemented; a client SDK remains after integration approval.
 5. Run tenant penetration/privacy testing before any multi-company production launch.
 
 This milestone must precede cross-company import, messaging and network adoption work.
@@ -91,8 +91,8 @@ The earlier instruction to use the available real customer data instead of demo 
 
 ## Rough effort range
 
-- Current single-company pilot to approved release: several focused development/acceptance days once Docker and approvals are available.
-- Universal worker and supervisor-workflow MVP: approximately 12–20 full-time engineering weeks for one experienced developer, before extensive customer feedback.
-- Hardened multi-tenant commercial platform with APIs, three languages, multi-client migrations and public demo controls: more realistically a multi-month product programme with security, privacy, QA and customer-operations support.
+- Current single-company pilot to customer-approved release: normally a few focused acceptance and defect-resolution days, depending on tester availability and findings.
+- Remaining provider-backed notifications, OCR/document refinements and long-tail product quality: several focused engineering weeks after provider and privacy decisions.
+- Hardened multi-company commercial operation remains a multi-month programme because penetration testing, legal/privacy approval, additional customer migrations, onboarding and support cannot be completed by code alone.
 
 These ranges are planning estimates, not commitments; provider choices, legal/privacy decisions, migration quality and customer feedback can materially change them.

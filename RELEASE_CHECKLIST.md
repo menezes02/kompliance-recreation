@@ -1,6 +1,26 @@
 # Kompliance Release Checklist
 
-Status: **HOLD — package verified locally, production release not yet authorised**
+Status: **PILOT READY — deployed for controlled customer acceptance; commercial release approval remains pending**
+
+## Current pilot release record
+
+- Live URL: `https://kompliance.felipeitprojects.com/`
+- Application release commit: `fc5ac80c778032e7d4b56c53cf0a7b6d0c4808b0`
+- Documentation/handoff branch commit: recorded in Git history after this checklist update
+- Rollback package: `/home/vulcano/apps/kompliance/backups/predeploy-20260722-commercial-hardening`
+- Verified post-deployment backup: `/home/vulcano/apps/kompliance/backups/postdeploy-fc5ac80/kompliance-local-data.zip`
+- Verified pilot-ready backup: `/home/vulcano/apps/kompliance/backups/pilot-ready/pilot-ready-20260722T113541Z.zip`
+- Pilot-ready backup SHA-256: `c38b513e4a8f46c8325163d67c482601300b1300ebb88c87f61166c98002b516`
+- Verified workstation copies: `workstation-backups/`
+- Protected snapshot: 3,597 immutable records
+- Source archive: 3,077 files / 775,800,726 bytes, mounted read-only
+- Live services: application, gateway and operations containers healthy
+- Pilot accounts: one administrator, one Viewer and one Editor; role boundaries live-tested
+- Live readiness: HTTPS `/api/health/ready` returned HTTP 200
+- Database integrity: `ok`
+- Browser smoke test: passed with no console errors
+
+The technical deployment checks above are complete. The unchecked approval and acceptance items below remain intentionally open for the named customer and technical owners.
 
 This checklist protects the existing customer-facing installation and preserves the imported source archive. A production release must not begin until every item in the approval section is recorded.
 

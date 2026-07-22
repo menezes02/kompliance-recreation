@@ -4,11 +4,11 @@ Use this checklist with the company pilot user before approving production relea
 
 ## Pilot record
 
-- Pilot company:
+- Pilot company: Kingscroft Developments
 - Pilot site(s):
 - Business owner:
 - Pilot user(s):
-- Build commit:
+- Build commit: `fc5ac80c778032e7d4b56c53cf0a7b6d0c4808b0`
 - Test start/end dates:
 - Acceptance decision: Pending / Accepted / Rejected
 

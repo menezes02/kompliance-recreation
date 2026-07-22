@@ -1,6 +1,6 @@
 # Kompliance Operations Runbook
 
-Status: local release candidate. Production remains on hold until the approvals in `RELEASE_CHECKLIST.md` are recorded.
+Status: private pilot deployed for controlled customer acceptance. Commercial release remains conditional on the approvals in `RELEASE_CHECKLIST.md`.
 
 ## Fresh local container validation
 
