@@ -1736,6 +1736,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                         "name": "Local Administrator",
                         "email": "local@kompliance.test",
                         "role": "admin",
+                        "company_id": 1,
+                        "company_name": DEFAULT_SETTINGS["brand_company"],
+                        "platform_admin": 1,
                     },
                     "csrf_token": "",
                 }
