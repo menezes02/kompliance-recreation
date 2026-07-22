@@ -6,6 +6,7 @@ deployment/htpasswd
 
 # Runtime state
 local-app/data/
+workstation-backups/
 .test-data-*/
 *.db
 *.db-shm
