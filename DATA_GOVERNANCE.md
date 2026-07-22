@@ -35,6 +35,11 @@ already been granted.
 | Deploy a production application release | Product owner plus technical owner | Release approval and rollback reference | Pending |
 | Enable email, SMS, push, or external API traffic | Product owner plus relevant service owner | Provider/configuration approval | Pending |
 
+The migration CLI enforces the per-client authoriser/reference, an exact apply
+acknowledgement, checksum inventory and a dry-run reconciliation report. It
+refuses to target the protected source-snapshot tenant. The existence of the
+tool does not itself authorise any customer export or migration.
+
 ## Technical enforcement
 
 Production-reading scripts require all of the following process environment

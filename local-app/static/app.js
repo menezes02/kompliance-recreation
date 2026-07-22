@@ -3794,6 +3794,10 @@ async function initializeAuth() {
     }
     document.body.classList.remove("auth-screen");
     applyAuthContext();
+    try {
+      const preferenceResult = await api("/api/company/preferences");
+      window.KomplianceI18n?.setLanguage(preferenceResult.preferences?.preferred_language || "en", false);
+    } catch {}
     await route();
   } catch (error) {
     app.innerHTML = `<section class="card error-card"><h2>Unable to initialise security</h2><p>${escapeHtml(error.message)}</p></section>`;
@@ -3838,6 +3842,7 @@ async function renderSystemCentre() {
   const scheduler = configuration.scheduler || {};
   const retention = status.retention_preview || {};
   const notifications = notificationResult.data || [];
+  const migrations = status.migrations || [];
   app.innerHTML = `
     ${pageHeader("System & privacy", "Release readiness, branding, delivery and retention controls")}
     <section class="system-status-grid">
@@ -3871,6 +3876,7 @@ async function renderSystemCentre() {
       </article>
     </section>
     <section class="card table-card"><div class="table-toolbar"><div><span>Delivery history</span><h2>Prepared and sent notifications</h2></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Kind</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Attempts</th><th>Action</th></tr></thead><tbody>${notifications.slice(0, 100).map((row) => `<tr><td>${escapeHtml(displayDate(row.created_at) || row.created_at)}</td><td>${escapeHtml(row.kind || "Notification")}</td><td>${escapeHtml(row.recipient || "Not assigned")}</td><td>${escapeHtml(row.subject || "—")}</td><td><span class="status">${escapeHtml(row.status || row.delivery_status || "Prepared")}</span>${row.last_error ? `<small class="delivery-error">${escapeHtml(row.last_error)}</small>` : ""}</td><td>${Number(row.attempts || 0)}</td><td>${row.delivery_status === "failed" ? `<button type="button" data-retry-notification="${row.id}" ${email.enabled && email.configured ? "" : "disabled"}>Retry</button>` : "—"}</td></tr>`).join("") || `<tr><td colspan="7" class="table-empty">No local notification history yet.</td></tr>`}</tbody></table></div></section>
+    <section class="card table-card"><div class="table-toolbar"><div><span>Tenant migration</span><h2>Authorised migration history</h2><small>Packages are validated and dry-run from the command line before an explicitly authorised apply.</small></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Source</th><th>Package</th><th>Status</th><th>Input</th><th>Inserted</th><th>Skipped</th><th>Authorisation</th></tr></thead><tbody>${migrations.map(row => `<tr><td>${escapeHtml(displayDate(row.created_at) || row.created_at)}</td><td>${escapeHtml(row.source_tenant)}</td><td><code>${escapeHtml(row.package_id)}</code></td><td><span class="status">${escapeHtml(row.status)}</span></td><td>${Number(row.input_records)}</td><td>${Number(row.inserted_records)}</td><td>${Number(row.skipped_records)}</td><td>${escapeHtml(row.authorised_by)} · ${escapeHtml(row.authorisation_reference)}</td></tr>`).join("") || `<tr><td colspan="8" class="table-empty">No tenant migrations have been applied.</td></tr>`}</tbody></table></div></section>
   `;
   document.querySelector("#system-settings-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4079,6 +4085,23 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("popstate", route);
+window.addEventListener("kompliance:language", async (event) => {
+  if (!state.auth.authenticated) return;
+  try {
+    const current = await api("/api/company/preferences");
+    const preferences = current.preferences || {};
+    await api("/api/company/preferences", {
+      method: "PUT",
+      body: JSON.stringify({
+        in_app: Boolean(preferences.in_app), email: Boolean(preferences.email),
+        sms: Boolean(preferences.sms), push: Boolean(preferences.push),
+        preferred_language: event.detail.language,
+      }),
+    });
+  } catch (error) {
+    showToast(`Language saved on this device only: ${error.message}`, "error");
+  }
+});
 document.querySelector("#year").textContent = new Date().getFullYear();
 bindRouteLinks();
 initializeAuth();

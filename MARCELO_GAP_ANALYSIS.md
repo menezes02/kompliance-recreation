@@ -5,7 +5,7 @@ Assessment date: 22 July 2026
 ## Executive status
 
 - Current single-company customer pilot: approximately **90% complete**.
-- Full multi-company platform described in Marcelo's notes: approximately **65–70% complete**.
+- Full multi-company platform described in Marcelo's notes: approximately **72–76% complete**.
 - Production remains on hold pending pilot sign-off, release approval, backup references and a rollback commit.
 
 The current product is a secured operations clone using one authorised customer snapshot plus isolated local workflows. Marcelo's document expands this into a multi-tenant worker identity and compliance network. Those are different delivery milestones.
@@ -17,9 +17,9 @@ The current product is a secured operations clone using one authorised customer 
 | 1. Universal Worker Profile | 80% | Free self-registration, email verification/recovery, editable complete profile, worker QR/public profile, field-level company consent/revocation, tenant relationships/import, revocable audited REST API, English/Portuguese/Spanish preference architecture | Approved SMS/mobile OTP provider, camera-based QR scanner/request handshake, full translation of every company screen, formal OpenAPI/client SDK |
 | 2. Document Management | 78% | Imported libraries, PDF/image viewing/download, worker-owned categories, drag/drop multi-upload/progress, validation, preview/delete, automatic versions, expiry colours/reminders, tenant document review | Automatic expiry extraction from document content, company plant/equipment/site ownership refinements, visual version-history grouping |
 | 3. Compliance & Workflow | 82% | Forms/drafts/signatures/evidence/reports, certificate verification/revocation, expiry centre, email queue/retries, audit/roles, per-company worker-document reviews, routed requests, internal worker/company conversations, induction decisions/comments/history, in-app notifications and channel/language preferences | Approved SMS/push providers, provider delivery receipts/escalations, richer supervisor queues and formal customer acceptance |
-| 4. Responsive UI | 90% | Responsive navigation, dashboards, tables, forms, document viewers, desktop/mobile workflow checks | Exhaustive tablet/device accessibility and touch acceptance across every mapped route |
+| 4. Responsive UI | 93% | Responsive navigation, dashboards, tables, forms, document viewers, desktop/mobile workflow checks, persistent English/Portuguese/Spanish localisation for the shell and primary workflows | Complete the long-tail translation catalogue and native-speaker review; exhaustive tablet/device accessibility and touch acceptance |
 | 5. Demo Environment | 5% | Data boundaries and governance documentation | Separate fictional dataset, redacted/sample files, watermarking, automated PII scan and public-demo approval |
-| 6. Data Migration | 45% | One customer snapshot with 3,597 immutable records, preserved files/relationships and isolated tenant targets | Repeatable per-client extract-transform-import pipeline, reconciliation reports, additional authorised clients such as Grandbrind |
+| 6. Data Migration | 82% | One immutable customer snapshot plus a repeatable checksum-inventoried package builder, dry-run reconciliation, transactional isolated-tenant import, relationship remapping, attachment registration, provenance, replay prevention and run history | Map and rehearse each additional authorised client's source schema; obtain written approval and customer-level acceptance reports |
 | 7. Business Outcomes | 55% | Reduced repeated entry, central operations, expiry visibility, consented cross-company worker import, QR identity and third-party REST access | Production network adoption, complete internationalisation, provider-backed mobile authentication and customer onboarding operations |
 
 ## Release-candidate work completed
@@ -73,8 +73,8 @@ This milestone must precede cross-company import, messaging and network adoption
 
 ### Milestone D — International product and migration
 
-1. Extract all interface text into translation keys; add English, Portuguese and Spanish.
-2. Build repeatable tenant migration packages with source/target counts and relationship reconciliation.
+1. In progress: persistent English, Portuguese and Spanish translation layer covers the shell and primary operational workflows; long-tail catalogue/native review remains.
+2. Implemented locally: repeatable tenant migration packages with checksums, dry run, source/target counts, relationship and attachment reconciliation, replay protection and audit history.
 3. Migrate additional clients only with per-client written authorisation.
 4. Build a completely separate fictional demo tenant and automated PII/document watermark checks.
 

@@ -630,9 +630,49 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tenant_migration_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                package_id TEXT NOT NULL,
+                package_sha256 TEXT NOT NULL,
+                source_tenant TEXT NOT NULL,
+                authorised_by TEXT NOT NULL,
+                authorisation_reference TEXT NOT NULL,
+                status TEXT NOT NULL,
+                input_records INTEGER NOT NULL DEFAULT 0,
+                inserted_records INTEGER NOT NULL DEFAULT 0,
+                skipped_records INTEGER NOT NULL DEFAULT 0,
+                reconciliation_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                UNIQUE(company_id, package_id),
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tenant_migration_record_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                company_id INTEGER NOT NULL,
+                source_key TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                local_record_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(company_id, source_key),
+                FOREIGN KEY(run_id) REFERENCES tenant_migration_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(local_record_id) REFERENCES records(id) ON DELETE CASCADE
+            )
+            """
+        )
         connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_requests_company_status ON workflow_requests(company_id, status)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_conversations_company_worker ON workflow_conversations(company_id, worker_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON in_app_notifications(recipient_type, recipient_id, read_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_migration_runs_company ON tenant_migration_runs(company_id, created_at)")
         for key, value in DEFAULT_SETTINGS.items():
             connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)",
@@ -3404,6 +3444,10 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "SELECT COUNT(*) FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.expires_at > ? AND users.company_id = ?", (utc_now(), company_id)
             ).fetchone()[0]
             audit_events = connection.execute("SELECT COUNT(*) FROM audit_log WHERE company_id = ?", (company_id,)).fetchone()[0]
+            migration_rows = connection.execute(
+                "SELECT id, package_id, source_tenant, status, input_records, inserted_records, skipped_records, authorised_by, authorisation_reference, created_at, completed_at FROM tenant_migration_runs WHERE company_id = ? ORDER BY id DESC LIMIT 50",
+                (company_id,),
+            ).fetchall()
         protected = local = 0
         for row in rows:
             try:
@@ -3423,6 +3467,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "records": {"protected": protected, "local": local, "total": len(rows)},
                 "active_sessions": active_sessions,
                 "audit_events": audit_events,
+                "migrations": [dict(row) for row in migration_rows],
                 "disk": {"free_bytes": disk.free, "total_bytes": disk.total},
                 "email": public_email_configuration(),
                 "scheduler": dict(SCHEDULER_STATE),

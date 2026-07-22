@@ -113,6 +113,8 @@ presentation/action HTML are not stored in the snapshot.
 - Optional application login with administrator/editor/viewer enforcement, CSRF-protected sessions and a local audit log; enabled by default in Docker
 - Controlled local workflow workspace with real imported form definitions, draft/resume, final required-field validation, signature pads, evidence attachments and complete submission PDFs
 - Tenant-scoped supervisor workflow centre with department routing, worker/company requests and conversations, induction decisions/history, in-app notifications and delivery preferences
+- Persistent English, Portuguese and Spanish company-interface localisation with account-backed language preference
+- Checksum-verified tenant migration run history; the separate CLI is dry-run-first and refuses the protected snapshot tenant
 - Branded induction certificates with unique numbers, expiry dates, scannable verification QR codes, public status pages, replacement history and revocation
 - Expiry centre covering Safe Pass, GA1, risk-assessment and local-certificate dates, with configurable windows and local notification preparation
 - Deduplicated email queue with delivery history, retry state and an opt-in scheduler

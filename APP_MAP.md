@@ -28,6 +28,7 @@ source application:
 | `/shared-workers` | Company consent inbox, document review and workforce import |
 | `/workflow-centre` | Routed requests, conversations, induction approvals, notifications and department contacts |
 | `/worker/#inbox` | Worker request creation, conversation replies, induction status and notifications |
+| `/system` | System/privacy controls, notification delivery history and authorised tenant migration history |
 | `/api/v1/shared-workers` | Bearer-token REST list for active consent grants |
 | `/api/v1/workers/:id/*` | Scoped profile, certification, training, induction and document resources |
 
