@@ -1621,7 +1621,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
 
     def send_security_headers(self, html_document: bool = False) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("Permissions-Policy", "camera=(self), microphone=(), geolocation=(self)")
         if html_document:

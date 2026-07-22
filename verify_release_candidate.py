@@ -67,7 +67,7 @@ def main() -> int:
         base = f"http://127.0.0.1:{server.server_port}"
         try:
             health_code, health, health_headers = request(base + "/api/health/ready")
-            checks.append(("readiness_and_security_headers", health_code == 200 and health.get("ok") and health_headers.get("X-Content-Type-Options") == "nosniff" and health_headers.get("X-Frame-Options") == "DENY"))
+            checks.append(("readiness_and_security_headers", health_code == 200 and health.get("ok") and health_headers.get("X-Content-Type-Options") == "nosniff" and health_headers.get("X-Frame-Options") == "SAMEORIGIN"))
             setup_code, setup, setup_headers = request(base + "/api/auth/setup", "POST", {"name": "Release Admin", "email": "release@example.test", "password": "Release-Candidate-2026!"})
             cookie = setup_headers.get("Set-Cookie", "").split(";", 1)[0]
             csrf = setup.get("csrf_token", "")
