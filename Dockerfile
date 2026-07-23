@@ -3,7 +3,10 @@ FROM python:3.14-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN groupadd --gid 10001 kompliance \
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 kompliance \
     && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin kompliance
 
 WORKDIR /app

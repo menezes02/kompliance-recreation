@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import csv
 import hashlib
 import hmac
 import html
+import io
 import json
 import mimetypes
 import os
@@ -23,6 +25,7 @@ import zipfile
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from functools import lru_cache
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -205,6 +208,233 @@ def normalize_language(value: object) -> str:
     if candidate in SUPPORTED_LANGUAGES:
         return candidate
     return LANGUAGE_ALIASES.get(candidate, "en-IE")
+
+
+LANGUAGE_NAMES = {
+    "en-IE": "English",
+    "pl-PL": "Polski",
+    "ro-RO": "Română",
+    "pt-BR": "Português (Brasil)",
+    "uk-UA": "Українська",
+    "ru-RU": "Русский",
+    "es-ES": "Español",
+}
+
+SERVER_MESSAGES = {
+    "en-IE": {
+        "verify_subject": "Verify your Kompliance worker account",
+        "verify_body": "Verify your worker account within 24 hours: {url}",
+        "worker_reset_subject": "Reset your Kompliance worker password",
+        "worker_reset_body": "Reset your worker password within {minutes} minutes: {url}",
+        "user_reset_subject": "Kompliance password reset",
+        "user_reset_body": "Use this secure link within {minutes} minutes to reset your Kompliance password: {url}",
+        "compliance_subject": "{category} {state}: {subject}",
+        "compliance_body": "{category} for {subject} is {state} with due date {due_date}.",
+        "status_changed": "Status changed to {status}. {note}",
+        "induction_submitted": "Induction submitted for supervisor review at {site}.",
+        "induction_status": "Induction {status}. {comments}",
+    },
+    "pl-PL": {
+        "verify_subject": "Zweryfikuj konto pracownika Kompliance",
+        "verify_body": "Zweryfikuj konto pracownika w ciągu 24 godzin: {url}",
+        "worker_reset_subject": "Zresetuj hasło pracownika Kompliance",
+        "worker_reset_body": "Zresetuj hasło pracownika w ciągu {minutes} minut: {url}",
+        "user_reset_subject": "Resetowanie hasła Kompliance",
+        "user_reset_body": "Użyj tego bezpiecznego łącza w ciągu {minutes} minut, aby zresetować hasło Kompliance: {url}",
+        "compliance_subject": "{category} — {state}: {subject}",
+        "compliance_body": "{category} dla {subject}: stan {state}, termin {due_date}.",
+        "status_changed": "Status zmieniono na {status}. {note}",
+        "induction_submitted": "Instruktaż przesłano do weryfikacji przez przełożonego w lokalizacji {site}.",
+        "induction_status": "Instruktaż: {status}. {comments}",
+    },
+    "ro-RO": {
+        "verify_subject": "Verifică-ți contul de lucrător Kompliance",
+        "verify_body": "Verifică-ți contul de lucrător în termen de 24 de ore: {url}",
+        "worker_reset_subject": "Resetează parola contului de lucrător Kompliance",
+        "worker_reset_body": "Resetează parola contului de lucrător în termen de {minutes} minute: {url}",
+        "user_reset_subject": "Resetarea parolei Kompliance",
+        "user_reset_body": "Folosește acest link securizat în termen de {minutes} minute pentru a reseta parola Kompliance: {url}",
+        "compliance_subject": "{category} — {state}: {subject}",
+        "compliance_body": "{category} pentru {subject} are starea {state}, cu termenul {due_date}.",
+        "status_changed": "Starea a fost schimbată în {status}. {note}",
+        "induction_submitted": "Instructajul a fost trimis spre verificare supervizorului la {site}.",
+        "induction_status": "Instructaj: {status}. {comments}",
+    },
+    "pt-BR": {
+        "verify_subject": "Verifique sua conta de trabalhador no Kompliance",
+        "verify_body": "Verifique sua conta de trabalhador em até 24 horas: {url}",
+        "worker_reset_subject": "Redefina a senha da sua conta de trabalhador no Kompliance",
+        "worker_reset_body": "Redefina a senha da sua conta de trabalhador em até {minutes} minutos: {url}",
+        "user_reset_subject": "Redefinição de senha do Kompliance",
+        "user_reset_body": "Use este link seguro em até {minutes} minutos para redefinir sua senha do Kompliance: {url}",
+        "compliance_subject": "{category} — {state}: {subject}",
+        "compliance_body": "{category} de {subject} está com status {state} e vencimento em {due_date}.",
+        "status_changed": "O status foi alterado para {status}. {note}",
+        "induction_submitted": "A integração foi enviada para análise do supervisor em {site}.",
+        "induction_status": "Integração: {status}. {comments}",
+    },
+    "uk-UA": {
+        "verify_subject": "Підтвердьте обліковий запис працівника Kompliance",
+        "verify_body": "Підтвердьте обліковий запис працівника протягом 24 годин: {url}",
+        "worker_reset_subject": "Скиньте пароль працівника Kompliance",
+        "worker_reset_body": "Скиньте пароль працівника протягом {minutes} хвилин: {url}",
+        "user_reset_subject": "Скидання пароля Kompliance",
+        "user_reset_body": "Скористайтеся цим захищеним посиланням протягом {minutes} хвилин, щоб скинути пароль Kompliance: {url}",
+        "compliance_subject": "{category} — {state}: {subject}",
+        "compliance_body": "{category} для {subject}: стан {state}, кінцева дата {due_date}.",
+        "status_changed": "Стан змінено на {status}. {note}",
+        "induction_submitted": "Інструктаж надіслано керівнику на перевірку на об’єкті {site}.",
+        "induction_status": "Інструктаж: {status}. {comments}",
+    },
+    "ru-RU": {
+        "verify_subject": "Подтвердите учётную запись работника Kompliance",
+        "verify_body": "Подтвердите учётную запись работника в течение 24 часов: {url}",
+        "worker_reset_subject": "Сбросьте пароль работника Kompliance",
+        "worker_reset_body": "Сбросьте пароль работника в течение {minutes} минут: {url}",
+        "user_reset_subject": "Сброс пароля Kompliance",
+        "user_reset_body": "Используйте эту защищённую ссылку в течение {minutes} минут, чтобы сбросить пароль Kompliance: {url}",
+        "compliance_subject": "{category} — {state}: {subject}",
+        "compliance_body": "{category} для {subject}: состояние {state}, срок {due_date}.",
+        "status_changed": "Состояние изменено на {status}. {note}",
+        "induction_submitted": "Инструктаж отправлен руководителю на проверку на объекте {site}.",
+        "induction_status": "Инструктаж: {status}. {comments}",
+    },
+    "es-ES": {
+        "verify_subject": "Verifica tu cuenta de trabajador de Kompliance",
+        "verify_body": "Verifica tu cuenta de trabajador en un plazo de 24 horas: {url}",
+        "worker_reset_subject": "Restablece la contraseña de trabajador de Kompliance",
+        "worker_reset_body": "Restablece la contraseña de trabajador en un plazo de {minutes} minutos: {url}",
+        "user_reset_subject": "Restablecimiento de contraseña de Kompliance",
+        "user_reset_body": "Utiliza este enlace seguro en un plazo de {minutes} minutos para restablecer tu contraseña de Kompliance: {url}",
+        "compliance_subject": "{category} — {state}: {subject}",
+        "compliance_body": "{category} de {subject} está en estado {state}, con fecha límite {due_date}.",
+        "status_changed": "El estado cambió a {status}. {note}",
+        "induction_submitted": "La inducción se envió al supervisor para su revisión en {site}.",
+        "induction_status": "Inducción: {status}. {comments}",
+    },
+}
+
+SERVER_MESSAGE_SOURCES = {
+    key: value for key, value in SERVER_MESSAGES["en-IE"].items()
+}
+
+SAFETY_GLOSSARY = (
+    ("Kompliance", "Product name; never translate"),
+    ("Safe Pass", "Irish construction safety-awareness registration; keep the official name"),
+    ("RAMS", "Risk Assessments and Method Statements; keep the acronym"),
+    ("GA1", "Irish lifting equipment inspection form; keep the form code"),
+    ("GA2", "Irish lifting equipment examination form; keep the form code"),
+    ("GA3", "Irish scaffold inspection form; keep the form code"),
+    ("AF3", "Irish construction safety form; keep the form code"),
+    ("induction", "Site-specific safety onboarding"),
+    ("competent person", "A person with the required training, knowledge and experience"),
+    ("lifting equipment", "Work equipment used for lifting or lowering loads"),
+    ("working at height", "Work where a person could fall and be injured"),
+    ("personal protective equipment", "Equipment worn to reduce exposure to hazards"),
+    ("near miss", "An event that did not cause harm but had the potential to do so"),
+    ("hazard", "A source or situation with potential to cause harm"),
+    ("risk assessment", "A structured evaluation of hazards, likelihood and controls"),
+)
+
+
+def server_message(key: str, locale: object = "en-IE", **values) -> str:
+    language = normalize_language(locale)
+    template = SERVER_MESSAGES.get(language, {}).get(key) or SERVER_MESSAGES["en-IE"][key]
+    return template.format(**values).strip()
+
+
+def reviewed_server_message(
+    connection: sqlite3.Connection,
+    company_id: int,
+    key: str,
+    locale: object = "en-IE",
+    **values,
+) -> str:
+    language = normalize_language(locale)
+    source = SERVER_MESSAGE_SOURCES[key]
+    row = connection.execute(
+        """
+        SELECT translation FROM translation_reviews
+        WHERE company_id = ? AND locale = ? AND source_key = ? AND status = 'approved'
+        """,
+        (company_id, language, source),
+    ).fetchone()
+    template = row["translation"] if row else SERVER_MESSAGES.get(language, {}).get(key)
+    return str(template or source).format(**values).strip()
+
+
+@lru_cache(maxsize=1)
+def static_translation_catalog() -> dict:
+    path = STATIC_ROOT / "i18n-catalog.js"
+    try:
+        content = path.read_text("utf-8")
+        prefix = "window.KomplianceTranslationCatalog = Object.freeze("
+        payload = content.split(prefix, 1)[1].rsplit(");", 1)[0]
+        catalog = json.loads(payload)
+        return catalog if isinstance(catalog, dict) else {}
+    except (OSError, ValueError, IndexError, json.JSONDecodeError):
+        return {}
+
+
+def translate_ui(source: object, locale: object = "en-IE") -> str:
+    text = str(source)
+    language = normalize_language(locale)
+    if language == "en-IE":
+        return text
+    return str(static_translation_catalog().get(language, {}).get(text) or text)
+
+
+def approved_translation_overrides(
+    connection: sqlite3.Connection, company_id: int, locale: object
+) -> dict[str, str]:
+    language = normalize_language(locale)
+    rows = connection.execute(
+        """
+        SELECT source_key, translation
+        FROM translation_reviews
+        WHERE company_id = ? AND locale = ? AND status = 'approved'
+        """,
+        (company_id, language),
+    ).fetchall()
+    return {row["source_key"]: row["translation"] for row in rows}
+
+
+def preferred_language_for_owner(
+    connection: sqlite3.Connection, owner_type: str, owner_id: int
+) -> str:
+    row = connection.execute(
+        "SELECT preferred_language FROM notification_preferences WHERE owner_type = ? AND owner_id = ?",
+        (owner_type, owner_id),
+    ).fetchone()
+    if row:
+        return normalize_language(row["preferred_language"])
+    if owner_type == "worker":
+        profile_row = connection.execute(
+            "SELECT payload FROM worker_profiles WHERE worker_id = ?", (owner_id,)
+        ).fetchone()
+        if profile_row:
+            try:
+                return normalize_language(json.loads(profile_row["payload"]).get("preferred_language"))
+            except (TypeError, json.JSONDecodeError):
+                pass
+    return "en-IE"
+
+
+def preferred_language_for_email(connection: sqlite3.Connection, email: object) -> str:
+    address = str(email or "").strip().lower()
+    if not address:
+        return "en-IE"
+    worker = connection.execute(
+        "SELECT id FROM worker_accounts WHERE lower(email) = ?", (address,)
+    ).fetchone()
+    if worker:
+        return preferred_language_for_owner(connection, "worker", int(worker["id"]))
+    user = connection.execute(
+        "SELECT id FROM users WHERE lower(email) = ?", (address,)
+    ).fetchone()
+    if user:
+        return preferred_language_for_owner(connection, "user", int(user["id"]))
+    return "en-IE"
 
 
 def is_protected_payload(payload: dict) -> bool:
@@ -776,6 +1006,25 @@ def initialize_database() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS translation_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                locale TEXT NOT NULL,
+                source_key TEXT NOT NULL,
+                translation TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'machine',
+                reviewer TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                updated_by INTEGER,
+                updated_at TEXT NOT NULL,
+                UNIQUE(company_id, locale, source_key),
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS email_diagnostic_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 company_id INTEGER NOT NULL,
@@ -795,6 +1044,7 @@ def initialize_database() -> None:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON in_app_notifications(recipient_type, recipient_id, read_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_migration_runs_company ON tenant_migration_runs(company_id, created_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_email_diagnostics_company ON email_diagnostic_runs(company_id, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_translation_reviews_company_locale ON translation_reviews(company_id, locale, status)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_worker_access_requests_worker_status ON worker_access_requests(worker_id, status, created_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_worker_access_requests_company_status ON worker_access_requests(company_id, status, created_at)")
         connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_access_requests_one_pending ON worker_access_requests(company_id, worker_id) WHERE status = 'pending'")
@@ -1742,12 +1992,33 @@ def prepare_compliance_notifications(days: int, company_id: int = 1) -> dict:
             if fingerprint in fingerprints:
                 duplicates += 1
                 continue
+            locale = preferred_language_for_email(connection, item["recipient"])
+            localized_category = translate_ui(item["category"], locale)
+            localized_state = translate_ui(item["state"], locale).lower()
             notification = {
                 "kind": "compliance_reminder",
                 "channel": "Email",
                 "recipient": item["recipient"],
-                "subject": f"{item['category']} {item['state'].lower()}: {item['subject']}",
-                "message": f"{item['category']} for {item['subject']} is {item['state'].lower()} with due date {item['due_date']}.",
+                "subject": reviewed_server_message(
+                    connection,
+                    company_id,
+                    "compliance_subject",
+                    locale,
+                    category=localized_category,
+                    state=localized_state,
+                    subject=item["subject"],
+                ),
+                "message": reviewed_server_message(
+                    connection,
+                    company_id,
+                    "compliance_body",
+                    locale,
+                    category=localized_category,
+                    state=localized_state,
+                    subject=item["subject"],
+                    due_date=item["due_date"],
+                ),
+                "language": locale,
                 "related_resource": item["resource"],
                 "related_record_id": item["record_id"],
                 "due_date": item["due_date"],
@@ -1990,52 +2261,78 @@ def assemble_pdf(objects: list[str]) -> bytes:
     return bytes(output)
 
 
-def build_text_pdf(title: str, subtitle: str, lines: list[str]) -> bytes:
+@lru_cache(maxsize=1)
+def register_pdf_fonts() -> tuple[str, str]:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    roots = (
+        Path("C:/Windows/Fonts"),
+        Path("/usr/share/fonts/truetype/noto"),
+        Path("/usr/share/fonts/opentype/noto"),
+        Path("/usr/share/fonts/truetype/dejavu"),
+    )
+    for regular_name, bold_name in (
+        ("NotoSans-Regular.ttf", "NotoSans-Bold.ttf"),
+        ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
+    ):
+        for root in roots:
+            regular = root / regular_name
+            bold = root / bold_name
+            if regular.is_file() and bold.is_file():
+                pdfmetrics.registerFont(TTFont("KomplianceSans", str(regular)))
+                pdfmetrics.registerFont(TTFont("KomplianceSansBold", str(bold)))
+                return "KomplianceSans", "KomplianceSansBold"
+    return "Helvetica", "Helvetica-Bold"
+
+
+def build_text_pdf(
+    title: str,
+    subtitle: str,
+    lines: list[str],
+    locale: str = "en-IE",
+    overrides: dict[str, str] | None = None,
+) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen.canvas import Canvas
+
+    regular_font, bold_font = register_pdf_fonts()
     wrapped = []
     for line in lines:
-        chunks = textwrap.wrap(str(line), width=88, replace_whitespace=True) or [""]
-        wrapped.extend(chunks)
+        wrapped.extend(
+            textwrap.wrap(str(line), width=88, replace_whitespace=True, break_long_words=True)
+            or [""]
+        )
     page_chunks = [wrapped[index : index + 44] for index in range(0, len(wrapped), 44)] or [[]]
-    page_count = len(page_chunks)
-    normal_font = 3 + page_count * 2
-    bold_font = normal_font + 1
-    page_refs = " ".join(f"{3 + index * 2} 0 R" for index in range(page_count))
-    objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>",
-        f"<< /Type /Pages /Kids [{page_refs}] /Count {page_count} >>",
-    ]
-    for page_index, page_lines in enumerate(page_chunks):
-        content_ref = 4 + page_index * 2
-        commands = [
-            "0.04 0.38 0.30 rg 0 790 595 52 re f",
-            f"BT /F2 18 Tf 42 811 Td ({pdf_escape(title)}) Tj ET",
-            "0 0 0 rg",
-            f"BT /F1 9 Tf 42 774 Td ({pdf_escape(subtitle)}) Tj ET",
-        ]
-        y = 748
+    output = io.BytesIO()
+    canvas = Canvas(output, pagesize=A4, pageCompression=1)
+    width, height = A4
+    for page_index, page_lines in enumerate(page_chunks, 1):
+        canvas.setFillColorRGB(0.04, 0.38, 0.30)
+        canvas.rect(0, height - 52, width, 52, fill=1, stroke=0)
+        canvas.setFillColorRGB(1, 1, 1)
+        canvas.setFont(bold_font, 18)
+        canvas.drawString(42, height - 31, str(title)[:90])
+        canvas.setFillColorRGB(0.08, 0.18, 0.28)
+        canvas.setFont(regular_font, 9)
+        canvas.drawString(42, height - 68, str(subtitle)[:110])
+        y = height - 94
         for line in page_lines:
-            commands.append(f"BT /F1 9 Tf 42 {y} Td ({pdf_escape(line)}) Tj ET")
+            canvas.drawString(42, y, str(line))
             y -= 15
-        commands.append(
-            f"BT /F1 8 Tf 500 24 Td (Page {page_index + 1} of {page_count}) Tj ET"
+        canvas.setFont(regular_font, 8)
+        translations = overrides or {}
+        canvas.drawRightString(
+            width - 42,
+            24,
+            f"{translations.get('Page') or translate_ui('Page', locale)} {page_index} {translations.get('of') or translate_ui('of', locale)} {len(page_chunks)}",
         )
-        stream = "\n".join(commands)
-        objects.extend(
-            [
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {normal_font} 0 R /F2 {bold_font} 0 R >> >> /Contents {content_ref} 0 R >>",
-                f"<< /Length {len(stream.encode('latin-1', 'replace'))} >>\nstream\n{stream}\nendstream",
-            ]
-        )
-    objects.extend(
-        [
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-        ]
-    )
-    return assemble_pdf(objects)
+        canvas.showPage()
+    canvas.save()
+    return output.getvalue()
 
 
-def build_certificate_pdf(
+def build_certificate_pdf_legacy(
     company: str,
     worker: str,
     induction: str,
@@ -2101,6 +2398,77 @@ def build_certificate_pdf(
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     ]
     return assemble_pdf(objects)
+
+
+def build_certificate_pdf(
+    company: str,
+    worker: str,
+    induction: str,
+    site: str,
+    completed_at: str,
+    expires_at: str,
+    certificate_number: str,
+    verification_url: str,
+    brand_name: str = "Kompliance",
+    brand_tagline: str = "Health & Safety Operations",
+    locale: str = "en-IE",
+    overrides: dict[str, str] | None = None,
+) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen.canvas import Canvas
+
+    regular_font, bold_font = register_pdf_fonts()
+    output = io.BytesIO()
+    canvas = Canvas(output, pagesize=A4, pageCompression=1)
+    _, height = A4
+    canvas.setFillColorRGB(0.04, 0.38, 0.30)
+    canvas.rect(0, height - 62, 595, 62, fill=1, stroke=0)
+    canvas.setFillColorRGB(1, 1, 1)
+    canvas.setFont(bold_font, 13)
+    canvas.drawString(64, height - 39, brand_name.upper())
+    canvas.setFillColorRGB(0.08, 0.18, 0.28)
+
+    def label(source: str) -> str:
+        return (overrides or {}).get(source) or translate_ui(source, locale)
+
+    lines = [
+        (bold_font, 24, 64, 742, label("INDUCTION CERTIFICATE")),
+        (regular_font, 11, 64, 710, company),
+        (regular_font, 11, 64, 663, label("This certifies that")),
+        (bold_font, 21, 64, 628, worker),
+        (regular_font, 11, 64, 591, label("has completed the following site induction:")),
+        (bold_font, 15, 64, 562, induction),
+        (regular_font, 10, 64, 530, f"{label('Site')}: {site or label('Not specified')}"),
+        (regular_font, 10, 64, 510, f"{label('Completed')}: {completed_at}"),
+        (regular_font, 10, 64, 490, f"{label('Valid until')}: {expires_at}"),
+        (bold_font, 10, 64, 438, f"{label('Certificate')}: {certificate_number}"),
+        (regular_font, 8, 64, 410, label("Verify this certificate using the QR code or address below:")),
+        (regular_font, 7, 64, 392, verification_url),
+        (regular_font, 8, 64, 62, f"{label('Generated by')} {brand_name} · {brand_tagline}. {label('Status must be checked online.')}"),
+    ]
+    for font, size, x, y, value in lines:
+        canvas.setFont(font, size)
+        canvas.drawString(x, y, str(value))
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=1)
+    qr.add_data(verification_url)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    module_size = min(3.2, 122 / max(len(matrix), 1))
+    canvas.setFillColorRGB(0, 0, 0)
+    for row_index, row in enumerate(matrix):
+        for column_index, active in enumerate(row):
+            if active:
+                canvas.rect(
+                    414 + column_index * module_size,
+                    530 + (len(matrix) - row_index - 1) * module_size,
+                    module_size,
+                    module_size,
+                    fill=1,
+                    stroke=0,
+                )
+    canvas.showPage()
+    canvas.save()
+    return output.getvalue()
 
 
 def build_qr_svg(value: str, title: str = "QR code") -> bytes:
@@ -2555,12 +2923,29 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             datetime.now(UTC) + timedelta(minutes=RESET_TOKEN_MINUTES)
         ).replace(microsecond=0).isoformat()
         reset_url = f"{self.application_base_url()}/reset-password?token={raw_token}"
+        with DB_LOCK, connect_database() as language_connection:
+            locale = preferred_language_for_owner(
+                language_connection, "user", int(user_row["id"])
+            )
+            company_id = int(user_row["company_id"]) if "company_id" in user_row.keys() else 1
+            reset_subject = reviewed_server_message(
+                language_connection, company_id, "user_reset_subject", locale
+            )
+            reset_body = reviewed_server_message(
+                language_connection,
+                company_id,
+                "user_reset_body",
+                locale,
+                minutes=RESET_TOKEN_MINUTES,
+                url=reset_url,
+            )
         notification_payload = {
             "kind": "password_reset",
             "channel": "Email",
             "recipient": user_row["email"],
-            "subject": "Kompliance password reset",
-            "message": f"Use this secure link within {RESET_TOKEN_MINUTES} minutes to reset your Kompliance password: {reset_url}",
+            "subject": reset_subject,
+            "message": reset_body,
+            "language": locale,
             "reset_url": reset_url,
             "delivery_status": "prepared",
             "status": "Prepared - not sent",
@@ -3002,6 +3387,9 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         now = utc_now()
         profile = normalized_worker_profile(payload)
         profile["name"] = name
+        locale = normalize_language(profile.get("preferred_language"))
+        profile["preferred_language"] = locale
+        verification_subject = server_message("verify_subject", locale)
         raw_verification = secrets.token_urlsafe(32)
         verification_digest = hashlib.sha256(raw_verification.encode("utf-8")).hexdigest()
         verification_url = f"{self.application_base_url()}/worker/?verify={raw_verification}"
@@ -3018,14 +3406,31 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                     "INSERT INTO worker_profiles(worker_id, public_token, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                     (worker_id, secrets.token_urlsafe(24), json.dumps(profile), now, now),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO notification_preferences(owner_type, owner_id, preferred_language, updated_at)
+                    VALUES ('worker', ?, ?, ?)
+                    ON CONFLICT(owner_type, owner_id) DO UPDATE SET
+                        preferred_language = excluded.preferred_language,
+                        updated_at = excluded.updated_at
+                    """,
+                    (worker_id, locale, now),
+                )
                 if verification_required:
                     connection.execute(
                         "INSERT INTO worker_verification_tokens(token_hash, worker_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)",
                         (verification_digest, worker_id, expires_at, now),
                     )
                     notification_cursor = connection.execute(
-                        "INSERT INTO worker_notifications(worker_id, kind, recipient, subject, message, status, attempts, created_at, updated_at) VALUES (?, 'email_verification', ?, 'Verify your Kompliance worker account', ?, 'prepared', 0, ?, ?)",
-                        (worker_id, email, f"Verify your worker account within 24 hours: {verification_url}", now, now),
+                        "INSERT INTO worker_notifications(worker_id, kind, recipient, subject, message, status, attempts, created_at, updated_at) VALUES (?, 'email_verification', ?, ?, ?, 'prepared', 0, ?, ?)",
+                        (
+                            worker_id,
+                            email,
+                            verification_subject,
+                            server_message("verify_body", locale, url=verification_url),
+                            now,
+                            now,
+                        ),
                     )
                     notification_id = notification_cursor.lastrowid
                 connection.commit()
@@ -3036,7 +3441,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         email_configuration = public_email_configuration()
         if verification_required and email_configuration["enabled"] and email_configuration["configured"]:
             try:
-                send_notification_email({"recipient": email, "subject": "Verify your Kompliance worker account", "message": f"Verify your worker account within 24 hours: {verification_url}"})
+                send_notification_email({
+                    "recipient": email,
+                    "subject": verification_subject,
+                    "message": server_message("verify_body", locale, url=verification_url),
+                    "language": locale,
+                })
                 with DB_LOCK, connect_database() as connection:
                     connection.execute("UPDATE worker_notifications SET status = 'sent', attempts = 1, updated_at = ? WHERE id = ?", (utc_now(), notification_id))
                     connection.commit()
@@ -3433,17 +3843,26 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         reset_url = f"{self.application_base_url()}/worker/?reset={raw_token}"
         worker_id = None
         notification_id = None
+        locale = "en-IE"
         with DB_LOCK, connect_database() as connection:
             row = connection.execute("SELECT id FROM worker_accounts WHERE email = ? AND active = 1", (email,)).fetchone()
             if row:
                 worker_id = int(row["id"])
+                locale = preferred_language_for_owner(connection, "worker", worker_id)
                 connection.execute(
                     "INSERT INTO worker_reset_tokens(token_hash, worker_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)",
                     (digest, worker_id, expires_at, now),
                 )
                 notification_cursor = connection.execute(
-                    "INSERT INTO worker_notifications(worker_id, kind, recipient, subject, message, status, attempts, created_at, updated_at) VALUES (?, 'password_reset', ?, 'Reset your Kompliance worker password', ?, 'prepared', 0, ?, ?)",
-                    (worker_id, email, f"Reset your worker password within {RESET_TOKEN_MINUTES} minutes: {reset_url}", now, now),
+                    "INSERT INTO worker_notifications(worker_id, kind, recipient, subject, message, status, attempts, created_at, updated_at) VALUES (?, 'password_reset', ?, ?, ?, 'prepared', 0, ?, ?)",
+                    (
+                        worker_id,
+                        email,
+                        server_message("worker_reset_subject", locale),
+                        server_message("worker_reset_body", locale, minutes=RESET_TOKEN_MINUTES, url=reset_url),
+                        now,
+                        now,
+                    ),
                 )
                 notification_id = notification_cursor.lastrowid
                 connection.commit()
@@ -3453,7 +3872,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             response["reset_url"] = reset_url
         elif worker_id:
             try:
-                send_notification_email({"recipient": email, "subject": "Reset your Kompliance worker password", "message": f"Reset your worker password within {RESET_TOKEN_MINUTES} minutes: {reset_url}"})
+                send_notification_email({
+                    "recipient": email,
+                    "subject": server_message("worker_reset_subject", locale),
+                    "message": server_message("worker_reset_body", locale, minutes=RESET_TOKEN_MINUTES, url=reset_url),
+                    "language": locale,
+                })
                 with DB_LOCK, connect_database() as connection:
                     connection.execute("UPDATE worker_notifications SET status = 'sent', attempts = 1, updated_at = ? WHERE id = ?", (utc_now(), notification_id))
                     connection.commit()
@@ -4086,7 +4510,24 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             connection.execute("UPDATE workflow_requests SET status = ?, updated_at = ? WHERE id = ?", (status, now, request_id))
             connection.execute("INSERT INTO workflow_request_events(request_id, actor_type, actor_id, event_type, from_status, to_status, note, created_at) VALUES (?, 'user', ?, 'status_changed', ?, ?, ?, ?)", (request_id, user["id"] or None, row["status"], status, note, now))
             if row["worker_id"]:
-                create_in_app_notification(connection, user["company_id"], "worker", row["worker_id"], "request_status", row["subject"], f"Status changed to {status.replace('_', ' ')}. {note}".strip(), "/worker/#inbox")
+                locale = preferred_language_for_owner(connection, "worker", int(row["worker_id"]))
+                create_in_app_notification(
+                    connection,
+                    user["company_id"],
+                    "worker",
+                    row["worker_id"],
+                    "request_status",
+                    row["subject"],
+                    reviewed_server_message(
+                        connection,
+                        int(user["company_id"]),
+                        "status_changed",
+                        locale,
+                        status=translate_ui(status.replace("_", " "), locale),
+                        note=note,
+                    ),
+                    "/worker/#inbox",
+                )
             connection.commit()
         self.write_audit(user, "workflow_request_status", "workflow_requests", request_id, f"{row['status']} → {status}")
         self.send_json({"id": request_id, "status": status, "updated_at": now})
@@ -4193,7 +4634,23 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             cursor = connection.execute("INSERT INTO induction_reviews(company_id, worker_id, induction_name, site, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)", (user["company_id"], worker_id, induction, site or None, now, now))
             connection.execute("INSERT INTO induction_review_events(review_id, actor_type, actor_id, to_status, comments, created_at) VALUES (?, 'user', ?, 'pending', ?, ?)", (cursor.lastrowid, user["id"] or None, "Submitted for supervisor review", now))
-            create_in_app_notification(connection, user["company_id"], "worker", worker_id, "induction_review", induction, f"Induction submitted for supervisor review at {site or 'the assigned site'}.", "/worker/#inbox")
+            locale = preferred_language_for_owner(connection, "worker", worker_id)
+            create_in_app_notification(
+                connection,
+                user["company_id"],
+                "worker",
+                worker_id,
+                "induction_review",
+                induction,
+                reviewed_server_message(
+                    connection,
+                    int(user["company_id"]),
+                    "induction_submitted",
+                    locale,
+                    site=site or translate_ui("the assigned site", locale),
+                ),
+                "/worker/#inbox",
+            )
             connection.commit()
         self.write_audit(user, "induction_review_created", "induction_reviews", cursor.lastrowid, induction)
         self.send_json({"id": cursor.lastrowid, "status": "pending"}, HTTPStatus.CREATED)
@@ -4217,7 +4674,24 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             connection.execute("UPDATE induction_reviews SET status = ?, comments = ?, reviewer_id = ?, reviewed_at = ?, updated_at = ? WHERE id = ?", (status, comments or None, user["id"] or None, now, now, review_id))
             connection.execute("INSERT INTO induction_review_events(review_id, actor_type, actor_id, from_status, to_status, comments, created_at) VALUES (?, 'user', ?, ?, ?, ?, ?)", (review_id, user["id"] or None, row["status"], status, comments or None, now))
-            create_in_app_notification(connection, user["company_id"], "worker", row["worker_id"], "induction_status", row["induction_name"], f"Induction {status.replace('_', ' ')}. {comments}".strip(), "/worker/#inbox")
+            locale = preferred_language_for_owner(connection, "worker", int(row["worker_id"]))
+            create_in_app_notification(
+                connection,
+                user["company_id"],
+                "worker",
+                row["worker_id"],
+                "induction_status",
+                row["induction_name"],
+                reviewed_server_message(
+                    connection,
+                    int(user["company_id"]),
+                    "induction_status",
+                    locale,
+                    status=translate_ui(status.replace("_", " "), locale),
+                    comments=comments,
+                ),
+                "/worker/#inbox",
+            )
             connection.commit()
         self.write_audit(user, "induction_review_status", "induction_reviews", review_id, status)
         self.send_json({"id": review_id, "status": status, "comments": comments, "reviewed_at": now})
@@ -4262,6 +4736,150 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                                   ON CONFLICT(owner_type, owner_id) DO UPDATE SET in_app=excluded.in_app, email=excluded.email, sms=excluded.sms, push=excluded.push, preferred_language=excluded.preferred_language, updated_at=excluded.updated_at""", (owner_type, actor["id"], *values, language, utc_now()))
             connection.commit()
         self.send_json({"updated": True, "in_app": values[0], "email": values[1], "sms": values[2], "push": values[3], "preferred_language": language})
+
+    def translation_rows(self, user, locale: str) -> list[dict]:
+        language = normalize_language(locale)
+        catalog = static_translation_catalog().get(language, {})
+        if not isinstance(catalog, dict):
+            catalog = {}
+        catalog = dict(catalog)
+        for key, source in SERVER_MESSAGE_SOURCES.items():
+            catalog[source] = SERVER_MESSAGES.get(language, {}).get(key) or source
+        with DB_LOCK, connect_database() as connection:
+            review_rows = connection.execute(
+                "SELECT source_key, translation, status, reviewer, note, updated_at FROM translation_reviews WHERE company_id = ? AND locale = ?",
+                (int(user["company_id"]), language),
+            ).fetchall()
+        reviews = {row["source_key"]: dict(row) for row in review_rows}
+        rows = []
+        for source in sorted(catalog, key=str.casefold):
+            review = reviews.get(source)
+            translation = str(review["translation"] if review else catalog[source])
+            rows.append({
+                "source": source,
+                "translation": translation,
+                "status": review["status"] if review else "machine",
+                "reviewer": review["reviewer"] if review else "",
+                "note": review["note"] if review else "",
+                "updated_at": review["updated_at"] if review else "",
+                "fallback": not translation.strip() or translation.strip() == source.strip(),
+            })
+        return rows
+
+    def handle_translation_overrides(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                "SELECT locale, source_key, translation FROM translation_reviews WHERE company_id = ? AND status = 'approved' ORDER BY locale, source_key",
+                (int(user["company_id"]),),
+            ).fetchall()
+        overrides = {}
+        for row in rows:
+            overrides.setdefault(row["locale"], {})[row["source_key"]] = row["translation"]
+        self.send_json({"overrides": overrides})
+
+    def handle_translations_get(self, user, query: str) -> None:
+        parameters = parse_qs(query)
+        locale = normalize_language(parameters.get("locale", ["pl-PL"])[0])
+        if locale == "en-IE":
+            locale = "pl-PL"
+        search = parameters.get("search", [""])[0].strip().casefold()
+        status_filter = parameters.get("status", [""])[0].strip().lower()
+        page = max(int(parameters.get("page", ["1"])[0] or 1), 1)
+        page_size = min(max(int(parameters.get("page_size", ["25"])[0] or 25), 10), 100)
+        all_rows = self.translation_rows(user, locale)
+        stats = {name: sum(row["status"] == name for row in all_rows) for name in ("machine", "in_review", "approved", "needs_changes")}
+        stats.update({"fallback": sum(bool(row["fallback"]) for row in all_rows), "total": len(all_rows)})
+        filtered = [
+            row for row in all_rows
+            if (not search or search in row["source"].casefold() or search in row["translation"].casefold())
+            and (not status_filter or row["status"] == status_filter)
+        ]
+        start = (page - 1) * page_size
+        self.send_json({
+            "locale": locale,
+            "language": LANGUAGE_NAMES.get(locale, locale),
+            "supported_languages": [{"locale": key, "name": value} for key, value in LANGUAGE_NAMES.items() if key != "en-IE"],
+            "stats": stats,
+            "data": filtered[start:start + page_size],
+            "page": page,
+            "page_size": page_size,
+            "filtered_total": len(filtered),
+            "glossary": [{"term": term, "guidance": guidance} for term, guidance in SAFETY_GLOSSARY],
+        })
+
+    def handle_translations_export(self, user, query: str) -> None:
+        parameters = parse_qs(query)
+        locale = normalize_language(parameters.get("locale", ["pl-PL"])[0])
+        if locale == "en-IE":
+            locale = "pl-PL"
+        output = io.StringIO(newline="")
+        fieldnames = ("locale", "source", "translation", "status", "reviewer", "note")
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in self.translation_rows(user, locale):
+            writer.writerow({"locale": locale, **{key: row[key] for key in fieldnames if key != "locale"}})
+        body = ("\ufeff" + output.getvalue()).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="kompliance-translations-{locale}.csv"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def save_translation_review(self, user, payload: dict) -> dict:
+        locale = normalize_language(payload.get("locale"))
+        source = str(payload.get("source", "")).strip()
+        translation = str(payload.get("translation", "")).strip()
+        status = str(payload.get("status", "in_review")).strip().lower()
+        reviewer = str(payload.get("reviewer", "")).strip()[:120]
+        note = str(payload.get("note", "")).strip()[:1000]
+        if locale == "en-IE" or not source or not translation or status not in {"machine", "in_review", "approved", "needs_changes"}:
+            raise ValueError("Locale, source, translation and a valid review status are required.")
+        if source not in static_translation_catalog().get(locale, {}) and source not in SERVER_MESSAGE_SOURCES.values():
+            raise ValueError("The source string is not part of the controlled catalogue.")
+        if sorted(re.findall(r"\{[a-z_]+\}", source)) != sorted(re.findall(r"\{[a-z_]+\}", translation)):
+            raise ValueError("Template placeholders must be preserved exactly in the reviewed translation.")
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            connection.execute(
+                """
+                INSERT INTO translation_reviews(company_id, locale, source_key, translation, status, reviewer, note, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(company_id, locale, source_key) DO UPDATE SET
+                    translation=excluded.translation, status=excluded.status, reviewer=excluded.reviewer,
+                    note=excluded.note, updated_by=excluded.updated_by, updated_at=excluded.updated_at
+                """,
+                (int(user["company_id"]), locale, source, translation, status, reviewer, note, int(user.get("id") or 0) or None, now),
+            )
+            connection.commit()
+        return {"locale": locale, "source": source, "translation": translation, "status": status, "reviewer": reviewer, "note": note, "updated_at": now}
+
+    def handle_translation_review_update(self, user) -> None:
+        try:
+            result = self.save_translation_review(user, self.read_json_body())
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        self.write_audit(user, "translation_review_updated", "translation_reviews", summary=f"{result['locale']}: {result['source'][:120]}")
+        self.send_json(result)
+
+    def handle_translations_import(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+            csv_text = str(payload.get("csv", ""))
+            if not csv_text.strip():
+                raise ValueError("CSV content is required.")
+            rows = list(csv.DictReader(io.StringIO(csv_text.lstrip("\ufeff"))))
+            if len(rows) > 5000:
+                raise ValueError("CSV import is limited to 5,000 rows.")
+            saved = [self.save_translation_review(user, row) for row in rows]
+        except (ValueError, json.JSONDecodeError, csv.Error) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        self.write_audit(user, "translation_reviews_imported", "translation_reviews", summary=f"Imported {len(saved)} translation review rows")
+        self.send_json({"imported": len(saved)}, HTTPStatus.CREATED)
 
     def handle_audit(self, query: str) -> None:
         user = self.require_user({"admin"})
@@ -4830,6 +5448,14 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "A local assignment, valid status, and answer list are required."}, HTTPStatus.BAD_REQUEST)
             return
         with DB_LOCK, connect_database() as connection:
+            locale = normalize_language(
+                payload.get("language")
+                or preferred_language_for_owner(connection, "user", int(user["id"]))
+            )
+            translation_overrides = approved_translation_overrides(
+                connection, int(user["company_id"]), locale
+            )
+            translated = lambda source: translation_overrides.get(source) or translate_ui(source, locale)
             distribution = local_record(connection, "distributions", int(distribution_id), user["company_id"])
             if distribution is None:
                 self.send_json({"error": "Local assignment not found."}, HTTPStatus.NOT_FOUND)
@@ -4893,6 +5519,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                     for item in evidence
                 ],
                 "updated_by": user["email"],
+                "language": locale,
                 "source": "local controlled workspace",
                 "local_only": True,
             }
@@ -4902,18 +5529,24 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 report_root.mkdir(parents=True, exist_ok=True)
                 report_name = f"submission-{secrets.token_hex(12)}.pdf"
                 report_lines = [
-                    f"Worker: {record_payload['worker']}",
-                    f"Site: {record_payload['site']}",
-                    f"Status: Submitted at {now}",
+                    f"{translated('Worker')}: {record_payload['worker']}",
+                    f"{translated('Site')}: {record_payload['site']}",
+                    f"{translated('Status')}: {translated('Submitted at')} {now}",
                     "",
                 ]
                 for answer in normalized_answers:
-                    value = "[Captured signature]" if answer["type"] == "Sign" and answer["value"] else answer["value"]
-                    report_lines.extend([f"{answer['section']} / {answer['question']}", f"Answer: {value}", ""])
+                    value = f"[{translated('Captured signature')}]" if answer["type"] == "Sign" and answer["value"] else answer["value"]
+                    report_lines.extend([f"{answer['section']} / {answer['question']}", f"{translated('Answer')}: {value}", ""])
                 if evidence:
-                    report_lines.append("Attachments: " + ", ".join(item.get("original_name", "") for item in evidence))
+                    report_lines.append(translated("Attachments") + ": " + ", ".join(item.get("original_name", "") for item in evidence))
                 (report_root / report_name).write_bytes(
-                    build_text_pdf(record_payload["form"], "Controlled local form submission", report_lines)
+                    build_text_pdf(
+                        record_payload["form"],
+                        translated("Controlled local form submission"),
+                        report_lines,
+                        locale,
+                        translation_overrides,
+                    )
                 )
                 record_payload["report_file"] = report_name
             existing = None
@@ -4973,6 +5606,14 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         verification_token = secrets.token_urlsafe(18)
         verification_url = f"{self.application_base_url()}/verify/{verification_token}"
         settings = application_settings(int(user["company_id"]))
+        with DB_LOCK, connect_database() as language_connection:
+            locale = normalize_language(
+                payload.get("language")
+                or preferred_language_for_owner(language_connection, "user", int(user["id"]))
+            )
+            translation_overrides = approved_translation_overrides(
+                language_connection, int(user["company_id"]), locale
+            )
         certificate_root = DATA_ROOT / "certificates"
         certificate_root.mkdir(parents=True, exist_ok=True)
         stored_name = f"induction-{secrets.token_hex(12)}.pdf"
@@ -4987,6 +5628,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             verification_url,
             settings.get("brand_name", "Kompliance"),
             settings.get("brand_tagline", "Health & Safety Operations"),
+            locale,
+            translation_overrides,
         )
         (certificate_root / stored_name).write_bytes(pdf)
         record_payload = {
@@ -5002,6 +5645,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             "status": "Active",
             "replaces_id": int(replaces_id) if str(replaces_id).isdigit() else None,
             "certificate_file": stored_name,
+            "language": locale,
             "source": "local controlled workspace",
             "local_only": True,
         }
@@ -5238,6 +5882,18 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path == "/api/audit":
             self.handle_audit(parsed.query)
             return
+        if path == "/api/translations/overrides":
+            self.handle_translation_overrides(self.request_user)
+            return
+        if path in {"/api/translations", "/api/translations/export"}:
+            if self.request_user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            if path.endswith("/export"):
+                self.handle_translations_export(self.request_user, parsed.query)
+            else:
+                self.handle_translations_get(self.request_user, parsed.query)
+            return
         if path == "/api/users":
             self.handle_users_get()
             return
@@ -5415,6 +6071,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             self.handle_users_create(user)
             return
+        if parsed.path == "/api/translations/import":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_translations_import(user)
+            return
         if parsed.path == "/api/companies":
             if user.get("role") != "admin":
                 self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
@@ -5558,6 +6220,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
                 return
             self.handle_settings_update(user)
+            return
+        if parsed.path == "/api/translations/review":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_translation_review_update(user)
             return
         if parsed.path == "/api/review/acceptance":
             if user.get("role") != "admin":

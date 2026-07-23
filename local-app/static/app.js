@@ -3428,7 +3428,7 @@ async function renderLocalWorkflows() {
     const form = new FormData(event.currentTarget);
     const inductionSelect = event.currentTarget.elements.induction;
     try {
-      await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ worker: form.get("worker"), induction: form.get("induction"), site: inductionSelect.selectedOptions[0]?.dataset.site || "" }) });
+      await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ worker: form.get("worker"), induction: form.get("induction"), site: inductionSelect.selectedOptions[0]?.dataset.site || "", language: window.KomplianceI18n?.getLanguage() || "en-IE" }) });
       showToast("Local induction certificate generated.");
       await renderLocalWorkflows();
     } catch (error) { showToast(error.message, "error"); }
@@ -3624,7 +3624,7 @@ async function renderPilotWorkflows() {
     const values = new FormData(submissionForm);
     const answers = formQuestions.map((question) => ({ key: question.key, value: values.get(`answer_${question.key}`) || "" }));
     try {
-      const result = await api("/api/local/submission", { method: "POST", body: JSON.stringify({ distribution_id: selectedDistribution.id, submission_id: submissionForm.dataset.submissionId || null, status: button.dataset.submitMode, answers, attachment_ids: selectedEvidence.map((row) => row.id) }) });
+      const result = await api("/api/local/submission", { method: "POST", body: JSON.stringify({ distribution_id: selectedDistribution.id, submission_id: submissionForm.dataset.submissionId || null, status: button.dataset.submitMode, answers, attachment_ids: selectedEvidence.map((row) => row.id), language: window.KomplianceI18n?.getLanguage() || "en-IE" }) });
       showToast(result.status === "Submitted" ? "Form submitted and PDF created." : "Draft saved.");
       await renderPilotWorkflows();
     } catch (error) { showToast(error.message, "error"); }
@@ -3634,7 +3634,7 @@ async function renderPilotWorkflows() {
     const form = new FormData(event.currentTarget);
     const inductionSelect = event.currentTarget.elements.induction;
     try {
-      await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ company: form.get("company"), worker: form.get("worker"), induction: form.get("induction"), validity_days: form.get("validity_days"), site: inductionSelect.selectedOptions[0]?.dataset.site || "" }) });
+      await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ company: form.get("company"), worker: form.get("worker"), induction: form.get("induction"), validity_days: form.get("validity_days"), site: inductionSelect.selectedOptions[0]?.dataset.site || "", language: window.KomplianceI18n?.getLanguage() || "en-IE" }) });
       showToast("Verified certificate issued.");
       await renderPilotWorkflows();
     } catch (error) { showToast(error.message, "error"); }
@@ -3647,7 +3647,7 @@ async function renderPilotWorkflows() {
   document.querySelectorAll("[data-replace-certificate]").forEach((button) => button.addEventListener("click", async () => {
     const prior = completions.find((row) => String(row.id) === button.dataset.replaceCertificate);
     if (!prior) return;
-    try { await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ company: prior.company, worker: prior.worker, induction: prior.induction, site: prior.site, validity_days: 365, replaces_id: prior.id }) }); showToast("Replacement issued; previous certificate marked replaced."); await renderPilotWorkflows(); } catch (error) { showToast(error.message, "error"); }
+    try { await api("/api/local/certificate", { method: "POST", body: JSON.stringify({ company: prior.company, worker: prior.worker, induction: prior.induction, site: prior.site, validity_days: 365, replaces_id: prior.id, language: window.KomplianceI18n?.getLanguage() || "en-IE" }) }); showToast("Replacement issued; previous certificate marked replaced."); await renderPilotWorkflows(); } catch (error) { showToast(error.message, "error"); }
   }));
 }
 
@@ -3673,6 +3673,8 @@ function applyAuthContext() {
   document.querySelector("#system-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#review-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#review-menu-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#translations-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#translations-menu-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#source-archive-link")?.classList.toggle("hidden", Number(user.company_id || 1) !== 1);
   document.querySelector("#logout-action")?.classList.toggle("hidden", !state.auth.enabled);
 }
@@ -3961,6 +3963,10 @@ async function initializeAuth() {
     document.body.classList.remove("auth-screen");
     applyAuthContext();
     try {
+      const translationResult = await api("/api/translations/overrides");
+      window.KomplianceI18n?.addOverrides(translationResult.overrides || {});
+    } catch {}
+    try {
       const preferenceResult = await api("/api/company/preferences");
       window.KomplianceI18n?.setLanguage(preferenceResult.preferences?.preferred_language || "en", false);
     } catch {}
@@ -4230,6 +4236,94 @@ async function renderReviewCentre() {
   });
 }
 
+const translationReviewState = { locale: "pl-PL", search: "", status: "", page: 1 };
+
+async function renderTranslationCentre() {
+  if ((state.auth.user || {}).role !== "admin") throw new Error("Administrator role required.");
+  const parameters = new URLSearchParams({
+    locale: translationReviewState.locale,
+    search: translationReviewState.search,
+    status: translationReviewState.status,
+    page: String(translationReviewState.page),
+    page_size: "25",
+  });
+  const result = await api(`/api/translations?${parameters}`);
+  const stats = result.stats || {};
+  const rows = result.data || [];
+  const totalPages = Math.max(Math.ceil((result.filtered_total || 0) / (result.page_size || 25)), 1);
+  app.innerHTML = `
+    ${pageHeader("Translation review", "Approve safety-critical wording before it overrides the machine-translated catalogue")}
+    <section class="translation-toolbar card">
+      <label><span>Review language</span><select id="translation-locale">${result.supported_languages.map(item => `<option value="${escapeHtml(item.locale)}" ${item.locale === result.locale ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
+      <a class="button button-secondary" href="/api/translations/export?locale=${encodeURIComponent(result.locale)}">Export CSV</a>
+      <label class="translation-import button button-secondary">Import reviewed CSV<input id="translation-import" type="file" accept=".csv,text/csv" /></label>
+    </section>
+    <section class="translation-stats">
+      ${[
+        ["Total strings", stats.total || 0],
+        ["Machine", stats.machine || 0],
+        ["In review", stats.in_review || 0],
+        ["Approved", stats.approved || 0],
+        ["Needs changes", stats.needs_changes || 0],
+        ["Fallbacks", stats.fallback || 0],
+      ].map(([label, value]) => `<article class="card"><span>${label}</span><strong>${value}</strong></article>`).join("")}
+    </section>
+    <section class="card translation-filters">
+      <form id="translation-filters"><label><span>Search source or translation</span><input name="search" value="${escapeHtml(translationReviewState.search)}" /></label><label><span>Review status</span><select name="status"><option value="">All statuses</option>${["machine", "in_review", "approved", "needs_changes"].map(value => `<option value="${value}" ${translationReviewState.status === value ? "selected" : ""}>${value.replaceAll("_", " ")}</option>`).join("")}</select></label><button class="button button-primary">Apply filters</button></form>
+    </section>
+    <section class="card table-card translation-table-card">
+      <div class="table-scroll"><table class="data-table translation-table"><thead><tr><th>English source</th><th>${escapeHtml(result.language)}</th><th>Status</th><th>Reviewer</th><th>Review note</th><th>Action</th></tr></thead><tbody>
+        ${rows.map((row, index) => `<tr data-translation-row="${index}"><td class="translation-source" data-i18n-skip>${escapeHtml(row.source)}${row.fallback ? `<span class="translation-warning">Fallback</span>` : ""}</td><td><textarea name="translation" rows="3">${escapeHtml(row.translation)}</textarea></td><td><select name="status">${["machine", "in_review", "approved", "needs_changes"].map(value => `<option value="${value}" ${row.status === value ? "selected" : ""}>${value.replaceAll("_", " ")}</option>`).join("")}</select></td><td><input name="reviewer" value="${escapeHtml(row.reviewer || "")}" /></td><td><textarea name="note" rows="2">${escapeHtml(row.note || "")}</textarea></td><td><button class="button button-primary translation-save" data-index="${index}">Save</button></td></tr>`).join("") || `<tr><td colspan="6" class="table-empty">No translation strings match these filters.</td></tr>`}
+      </tbody></table></div>
+      <div class="translation-pagination"><span>Page ${result.page} of ${totalPages} · ${result.filtered_total} strings</span><div><button class="button button-secondary" id="translation-previous" ${result.page <= 1 ? "disabled" : ""}>Previous</button><button class="button button-secondary" id="translation-next" ${result.page >= totalPages ? "disabled" : ""}>Next</button></div></div>
+    </section>
+    <details class="card translation-glossary"><summary>Controlled Irish construction terminology</summary><div class="table-scroll"><table class="data-table"><thead><tr><th>Term</th><th>Translator guidance</th></tr></thead><tbody>${result.glossary.map(item => `<tr><td><strong>${escapeHtml(item.term)}</strong></td><td>${escapeHtml(item.guidance)}</td></tr>`).join("")}</tbody></table></div></details>
+  `;
+  document.querySelector("#translation-locale").addEventListener("change", async event => {
+    translationReviewState.locale = event.target.value;
+    translationReviewState.page = 1;
+    await renderTranslationCentre();
+  });
+  document.querySelector("#translation-filters").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    translationReviewState.search = String(form.get("search") || "");
+    translationReviewState.status = String(form.get("status") || "");
+    translationReviewState.page = 1;
+    await renderTranslationCentre();
+  });
+  document.querySelectorAll(".translation-save").forEach(button => button.addEventListener("click", async () => {
+    const index = Number(button.dataset.index);
+    const row = button.closest("tr");
+    try {
+      await api("/api/translations/review", {
+        method: "PUT",
+        body: JSON.stringify({
+          locale: result.locale,
+          source: rows[index].source,
+          translation: row.querySelector("[name='translation']").value,
+          status: row.querySelector("[name='status']").value,
+          reviewer: row.querySelector("[name='reviewer']").value,
+          note: row.querySelector("[name='note']").value,
+        }),
+      });
+      showToast("Translation review saved.");
+      await renderTranslationCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  }));
+  document.querySelector("#translation-import").addEventListener("change", async event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const imported = await api("/api/translations/import", { method: "POST", body: JSON.stringify({ csv: await file.text() }) });
+      showToast(`${imported.imported} translation review rows imported.`);
+      await renderTranslationCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#translation-previous").addEventListener("click", async () => { translationReviewState.page -= 1; await renderTranslationCentre(); });
+  document.querySelector("#translation-next").addEventListener("click", async () => { translationReviewState.page += 1; await renderTranslationCentre(); });
+}
+
 async function renderComplianceCentre(days = 30) {
   const [result, notificationResult, configuration] = await Promise.all([
     api(`/api/compliance/reminders?days=${days}`),
@@ -4301,6 +4395,8 @@ async function route() {
       await renderSystemCentre();
     } else if (path === "/review") {
       await renderReviewCentre();
+    } else if (path === "/translations") {
+      await renderTranslationCentre();
     } else if (path === "/local-workflows") {
       await renderPilotWorkflows();
     } else if (path === "/compliance") {

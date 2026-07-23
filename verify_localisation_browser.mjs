@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const baseUrl = (process.env.KOMPLIANCE_TEST_URL || process.argv[2] || "http://127.0.0.1:8090").replace(/\/$/, "");
 const locales = ["en-IE", "pl-PL", "ro-RO", "pt-BR", "uk-UA", "ru-RU", "es-ES"];
-const routes = ["/", "/workers", "/ga1", "/ga2/form", "/ga3/form", "/workflow-centre", "/compliance", "/review"];
+const routes = ["/", "/workers", "/ga1", "/ga2/form", "/ga3/form", "/workflow-centre", "/compliance", "/review", "/translations"];
 const browser = await chromium.launch({ headless: true, channel: process.env.KOMPLIANCE_BROWSER_CHANNEL || "chrome" });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const failures = [];
@@ -39,7 +39,7 @@ try {
       const dictionary = window.KomplianceTranslationCatalog?.[locale] || {};
       const values = [];
       for (const element of document.querySelectorAll("body *")) {
-        if (element.closest("#app-language,#language,[name='preferred_language'],[data-i18n-skip]")) continue;
+        if (element.closest("#app-language,#language,[name='preferred_language'],[data-i18n-skip],[data-translation-row]")) continue;
         for (const node of element.childNodes) {
           const value = node.nodeType === 3 ? node.nodeValue.trim() : "";
           if (value && dictionary[value] && dictionary[value] !== value) values.push(value);
@@ -56,6 +56,12 @@ try {
     options: document.querySelectorAll("#language option").length,
   }));
   if (mobile.overflow > 1 || mobile.options !== locales.length) failures.push(`Worker mobile check failed: ${JSON.stringify(mobile)}`);
+  await page.goto(`${baseUrl}/translations`, { waitUntil: "networkidle" });
+  const translationMobile = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    reviewRows: document.querySelectorAll("[data-translation-row]").length,
+  }));
+  if (translationMobile.overflow > 1 || !translationMobile.reviewRows) failures.push(`Translation mobile check failed: ${JSON.stringify(translationMobile)}`);
 } finally {
   await browser.close();
 }

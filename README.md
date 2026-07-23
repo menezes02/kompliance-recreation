@@ -17,7 +17,13 @@ primary workflows and administrative screens; customer-entered record values are
 preserved. English remains the authoritative source language and safety-critical
 translations require native-speaker review before commercial sign-off. Run
 `python verify_localisation.py` to verify catalogue coverage, preference persistence
-and the protected-record boundary. See [TENANT_MIGRATION.md](TENANT_MIGRATION.md)
+and the protected-record boundary. Operational delivery is also localised: worker
+onboarding records a preferred language, system emails and in-app workflow notices
+use it, and generated submission/certificate PDFs embed Unicode fonts. Administrators
+use `/translations` to review tenant-scoped wording, approve runtime overrides,
+exchange reviewed CSV files, inspect fallbacks and follow the controlled Irish
+construction glossary. Run `python verify_operational_localisation.py` for this path.
+See [TENANT_MIGRATION.md](TENANT_MIGRATION.md)
 for the checksum-verified, dry-run-first customer migration process.
 
 The repository contains:
@@ -59,6 +65,11 @@ database, protected-record, role, MFA, email, privacy, scheduler, backup and cus
 acceptance evidence without changing the imported snapshot. The controlled test-email
 action requires explicit confirmation, stores only safe diagnostic history and never
 returns Gmail OAuth credentials.
+
+Administrators can open `/translations` for the Translation Review Centre. Machine
+translations remain clearly marked until a reviewer records a status; only approved
+rows override runtime wording. Template placeholders are protected during import and
+editing so reviewed email text cannot break delivery.
 
 Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
 The controlled customer test path is documented in `PILOT_TEST_HANDOFF.md`, with formal sign-off in `PILOT_ACCEPTANCE_CHECKLIST.md`.

@@ -229,6 +229,15 @@
     apply(document.body);
     if (notify) window.dispatchEvent(new CustomEvent("kompliance:language", {detail: {language}}));
   };
+  const addOverrides = (overrides = {}) => {
+    Object.entries(overrides).forEach(([locale, values]) => {
+      const normalized = normalizeLanguage(locale);
+      if (normalized !== defaultLanguage && values && typeof values === "object") {
+        Object.assign(dictionaries[normalized], values);
+      }
+    });
+    apply(document.body);
+  };
   const observer = new MutationObserver(mutations => {
     if (applying) return;
     applying = true;
@@ -236,7 +245,7 @@
     applying = false;
   });
   window.KomplianceI18n = {
-    apply, setLanguage, getLanguage: () => language, normalizeLanguage,
+    apply, setLanguage, addOverrides, getLanguage: () => language, normalizeLanguage,
     supported: [...supported], t: translateValue,
     formatDate: (value, options = {}) => new Intl.DateTimeFormat(language, options).format(value),
     formatNumber: (value, options = {}) => new Intl.NumberFormat(language, options).format(value),

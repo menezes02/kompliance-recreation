@@ -275,6 +275,122 @@ button {
   background: white;
 }
 
+.translation-toolbar,
+.translation-filters form,
+.translation-pagination {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.translation-toolbar label,
+.translation-filters label {
+  display: grid;
+  gap: .4rem;
+  min-width: 220px;
+}
+
+.translation-import {
+  cursor: pointer;
+}
+
+.translation-import input {
+  display: none;
+}
+
+.translation-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.translation-stats article {
+  display: grid;
+  gap: .35rem;
+}
+
+.translation-stats article span {
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.translation-stats article strong {
+  font-size: 1.65rem;
+}
+
+.translation-table {
+  min-width: 1320px;
+}
+
+.translation-table textarea,
+.translation-table input,
+.translation-table select {
+  width: 100%;
+  min-width: 150px;
+}
+
+.translation-table textarea {
+  resize: vertical;
+}
+
+.translation-source {
+  min-width: 260px;
+  max-width: 360px;
+  white-space: normal;
+}
+
+.translation-warning {
+  display: block;
+  width: max-content;
+  margin-top: .45rem;
+  padding: .15rem .45rem;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #8a5700;
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.translation-pagination {
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+}
+
+.translation-pagination > div {
+  display: flex;
+  gap: .5rem;
+}
+
+.translation-glossary {
+  margin-top: 1rem;
+}
+
+.translation-glossary summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .translation-stats {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .translation-stats {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .translation-toolbar > *,
+  .translation-filters label,
+  .translation-filters button {
+    width: 100%;
+  }
+}
+
 .button-danger {
   color: white;
   background: var(--danger);
