@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-IE">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,7 +12,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/worker/"><span>K</span><strong>Kompliance Worker</strong></a>
-    <div class="header-tools"><label class="language"><span>Language</span><select id="language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label><button id="logout" class="ghost hidden" type="button">Sign out</button></div>
+    <div class="header-tools"><label class="language"><span>Language</span><select id="language" aria-label="Language"><option value="en-IE">English</option><option value="pl-PL">Polski</option><option value="ro-RO">Română</option><option value="pt-BR">Português (Brasil)</option><option value="uk-UA">Українська</option><option value="ru-RU">Русский</option><option value="es-ES">Español</option></select></label><button id="logout" class="ghost hidden" type="button">Sign out</button></div>
   </header>
   <main>
     <section id="notice" class="notice hidden" role="status"></section>
@@ -60,7 +60,7 @@
         <div class="panel-heading"><div><p class="eyebrow">Identity</p><h2>Worker profile</h2></div><span class="privacy-pill">You control this data</span></div>
         <form id="profile-form" class="form-grid">
           <label>Full name<input name="name" required></label><label>Phone<input name="phone" autocomplete="tel"></label>
-          <label>Trade / occupation<input name="trade"></label><label>Preferred language<input name="preferred_language" placeholder="en"></label>
+          <label>Trade / occupation<input name="trade"></label><label>Preferred language<select name="preferred_language"><option value="en-IE">English</option><option value="pl-PL">Polski</option><option value="ro-RO">Română</option><option value="pt-BR">Português (Brasil)</option><option value="uk-UA">Українська</option><option value="ru-RU">Русский</option><option value="es-ES">Español</option></select></label>
           <label class="wide">Skills <span>one per line</span><textarea name="skills"></textarea></label>
           <label class="wide">Qualifications <span>one per line</span><textarea name="qualifications"></textarea></label>
           <label class="wide">Certifications <span>one per line</span><textarea name="certifications"></textarea></label>
@@ -98,13 +98,14 @@
           <article class="inbox-card wide"><h3>My requests</h3><div id="worker-requests" class="cards compact-cards"></div></article>
           <article class="inbox-card wide"><h3>Conversations</h3><div id="worker-conversations" class="cards compact-cards"></div></article>
           <article class="inbox-card"><h3>Induction approvals</h3><div id="worker-inductions" class="cards compact-cards"></div></article>
-          <article class="inbox-card"><h3>Notification preferences</h3><p class="meta">Provider-backed channels remain unavailable until approved and configured.</p><form id="worker-preferences-form" class="stack"><div id="worker-preference-channels" class="checks"></div><label>Language<select name="preferred_language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label><button class="primary">Save preferences</button></form></article>
+          <article class="inbox-card"><h3>Notification preferences</h3><p class="meta">Provider-backed channels remain unavailable until approved and configured.</p><form id="worker-preferences-form" class="stack"><div id="worker-preference-channels" class="checks"></div><label>Language<select name="preferred_language"><option value="en-IE">English</option><option value="pl-PL">Polski</option><option value="ro-RO">Română</option><option value="pt-BR">Português (Brasil)</option><option value="uk-UA">Українська</option><option value="ru-RU">Русский</option><option value="es-ES">Español</option></select></label><button class="primary">Save preferences</button></form></article>
         </div>
       </section>
     </section>
   </main>
   <footer><a href="/privacy">Privacy</a><span>Worker data is shared only with consent.</span></footer>
-  <script src="/static/i18n.js?v=4" defer></script>
-  <script src="/worker-static/worker.js?v=5" defer></script>
+  <script src="/static/i18n-catalog.js?v=2" defer></script>
+  <script src="/static/i18n.js?v=5" defer></script>
+  <script src="/worker-static/worker.js?v=6" defer></script>
 </body>
 </html>

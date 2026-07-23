@@ -112,7 +112,8 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Company and worker conversation replies are visible only to the matching tenant and worker.
 - [ ] In-app unread/read state works for both company and worker accounts.
 - [ ] SMS and push remain unavailable until approved providers are explicitly configured.
-- [ ] English, Portuguese and Spanish can be selected, survive navigation and reload, and do not alter customer record values.
+- [ ] English, Polish, Romanian, Brazilian Portuguese, Ukrainian, Russian and Spanish can be selected, survive navigation and reload, and do not alter customer record values.
+- [ ] A native speaker has reviewed safety-critical, legal, induction and emergency wording in every enabled non-English language.
 - [ ] A tenant migration package passes path, size and checksum validation before dry run.
 - [ ] Dry-run reconciliation matches source counts and creates no target records.
 - [ ] Migration apply is attempted only against an isolated tenant with recorded customer authorisation and a fresh backup.

@@ -17,6 +17,18 @@ Access level observed: customer/company administrator
 
 ## Local platform extensions
 
+### Localisation
+
+- Text-only language selectors are available in the company header and worker portal.
+- Supported locales: `en-IE`, `pl-PL`, `ro-RO`, `pt-BR`, `uk-UA`, `ru-RU`, `es-ES`.
+- Company and worker preferences persist the canonical locale code; legacy `en`, `pt`
+  and `es` values are upgraded automatically.
+- The static catalogue is generated from interface source strings and contains no
+  customer records. Customer-entered names, documents and record values remain
+  unchanged.
+- English is the authoritative source. Native-speaker review remains a commercial
+  release gate for safety-critical and legal wording.
+
 These routes belong to the recreated platform and were not used to mutate the
 source application:
 

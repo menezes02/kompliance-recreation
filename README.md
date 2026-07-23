@@ -10,7 +10,15 @@ The current release candidate adds a tenant-isolated Universal Worker Foundation
 
 See [SUPERVISOR_WORKFLOW.md](SUPERVISOR_WORKFLOW.md) for workflow states, routes and the external notification-provider boundary.
 
-The company application now includes persistent English, Portuguese and Spanish localisation for the shell and primary operational workflows. See [TENANT_MIGRATION.md](TENANT_MIGRATION.md) for the checksum-verified, dry-run-first customer migration process.
+The company and worker applications include persistent, text-only localisation for
+English (`en-IE`), Polish, Romanian, Brazilian Portuguese, Ukrainian, Russian and
+Spanish. The static catalogue covers shared navigation, authentication, validation,
+primary workflows and administrative screens; customer-entered record values are
+preserved. English remains the authoritative source language and safety-critical
+translations require native-speaker review before commercial sign-off. Run
+`python verify_localisation.py` to verify catalogue coverage, preference persistence
+and the protected-record boundary. See [TENANT_MIGRATION.md](TENANT_MIGRATION.md)
+for the checksum-verified, dry-run-first customer migration process.
 
 The repository contains:
 

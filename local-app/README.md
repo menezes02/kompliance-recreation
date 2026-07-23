@@ -100,7 +100,7 @@ presentation/action HTML are not stored in the snapshot.
 - Company consent inbox, local workforce import/refresh, shared document view and per-company approval/decline history
 - Worker-owned versioned documents with drag/drop multi-file upload, progress, validation, expiry colours, preview and delete
 - Revocable company API tokens and audited versioned REST resources for profiles, certifications, training, inductions and documents
-- Worker language preference with initial English, Portuguese and Spanish interface vocabulary
+- Worker language preference for English, Polish, Romanian, Brazilian Portuguese, Ukrainian, Russian and Spanish
 - Workforce filters for site, role/trade, account state, Safe Pass state and name order
 - Dashboard compliance alerts calculated from GA1 expiry dates and worker Safe Pass indicators
 - RAMS/Risk Assessment filters, calculated expiry status, read-only details and explicit missing-attachment handling for all 125 imported records
@@ -114,7 +114,7 @@ presentation/action HTML are not stored in the snapshot.
 - TOTP multi-factor authentication with one-time backup codes, other-session revocation and administrator-visible enrolment status
 - Controlled local workflow workspace with real imported form definitions, draft/resume, final required-field validation, signature pads, evidence attachments and complete submission PDFs
 - Tenant-scoped supervisor workflow centre with department routing, worker/company requests and conversations, induction decisions/history, in-app notifications and delivery preferences
-- Persistent English, Portuguese and Spanish company-interface localisation with account-backed language preference
+- Persistent seven-language company-interface localisation with text-only selectors and account-backed language preference
 - Checksum-verified tenant migration run history; the separate CLI is dry-run-first and refuses the protected snapshot tenant
 - paginated and per-token rate-limited consent API reads
 - auditable best-effort expiry extraction from uploaded document text and metadata

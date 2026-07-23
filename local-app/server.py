@@ -112,6 +112,11 @@ WORKFLOW_REQUEST_TYPES = {
 }
 WORKFLOW_STATUSES = {"open", "in_progress", "awaiting_information", "resolved", "closed"}
 INDUCTION_REVIEW_STATUSES = {"pending", "approved", "declined", "information_requested"}
+SUPPORTED_LANGUAGES = {"en-IE", "pl-PL", "ro-RO", "pt-BR", "uk-UA", "ru-RU", "es-ES"}
+LANGUAGE_ALIASES = {
+    "en": "en-IE", "pt": "pt-BR", "es": "es-ES", "pl": "pl-PL",
+    "ro": "ro-RO", "uk": "uk-UA", "ru": "ru-RU",
+}
 
 
 SEED_RECORDS = {
@@ -193,6 +198,13 @@ SEED_RECORDS = {
 
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def normalize_language(value: object) -> str:
+    candidate = str(value or "").strip()
+    if candidate in SUPPORTED_LANGUAGES:
+        return candidate
+    return LANGUAGE_ALIASES.get(candidate, "en-IE")
 
 
 def is_protected_payload(payload: dict) -> bool:
@@ -2127,7 +2139,7 @@ def normalized_worker_profile(payload: dict, existing: dict | None = None) -> di
             if not isinstance(value, list):
                 raise ValueError(f"{field} must be a list")
             profile[field] = value[:100]
-    profile.setdefault("preferred_language", "en")
+    profile["preferred_language"] = normalize_language(profile.get("preferred_language"))
     profile.setdefault("skills", [])
     profile.setdefault("qualifications", [])
     profile.setdefault("certifications", [])
@@ -4227,7 +4239,8 @@ class KomplianceHandler(BaseHTTPRequestHandler):
     def handle_preferences_get(self, actor, owner_type: str) -> None:
         with DB_LOCK, connect_database() as connection:
             row = connection.execute("SELECT * FROM notification_preferences WHERE owner_type = ? AND owner_id = ?", (owner_type, actor["id"])).fetchone()
-        preferences = dict(row) if row else {"owner_type": owner_type, "owner_id": actor["id"], "in_app": 1, "email": 0, "sms": 0, "push": 0, "preferred_language": "en"}
+        preferences = dict(row) if row else {"owner_type": owner_type, "owner_id": actor["id"], "in_app": 1, "email": 0, "sms": 0, "push": 0, "preferred_language": "en-IE"}
+        preferences["preferred_language"] = normalize_language(preferences.get("preferred_language"))
         email = public_email_configuration()
         self.send_json({"preferences": preferences, "channels": {"in_app": {"available": True}, "email": {"available": bool(email["enabled"] and email["configured"])}, "sms": {"available": False, "reason": "Provider approval and configuration required"}, "push": {"available": False, "reason": "Provider approval and configuration required"}}})
 
@@ -4237,10 +4250,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as error:
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
-        language = str(payload.get("preferred_language", "en"))
-        if language not in {"en", "pt", "es"}:
-            self.send_json({"error": "Preferred language must be en, pt or es."}, HTTPStatus.BAD_REQUEST)
+        raw_language = str(payload.get("preferred_language", "en-IE")).strip()
+        if raw_language not in SUPPORTED_LANGUAGES and raw_language not in LANGUAGE_ALIASES:
+            self.send_json({"error": "Preferred language is not supported."}, HTTPStatus.BAD_REQUEST)
             return
+        language = normalize_language(raw_language)
         values = [1 if bool(payload.get(channel, channel == "in_app")) else 0 for channel in ("in_app", "email", "sms", "push")]
         with DB_LOCK, connect_database() as connection:
             connection.execute("""INSERT INTO notification_preferences(owner_type, owner_id, in_app, email, sms, push, preferred_language, updated_at)

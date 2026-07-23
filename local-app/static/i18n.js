@@ -1,5 +1,14 @@
 (() => {
-  const supported = new Set(["en", "pt", "es"]);
+  const defaultLanguage = "en-IE";
+  const supported = new Set(["en-IE", "pl-PL", "ro-RO", "pt-BR", "uk-UA", "ru-RU", "es-ES"]);
+  const aliases = {
+    en: "en-IE", pt: "pt-BR", es: "es-ES", pl: "pl-PL", ro: "ro-RO", uk: "uk-UA", ru: "ru-RU",
+  };
+  const normalizeLanguage = (value) => {
+    const candidate = String(value || "").trim();
+    if (supported.has(candidate)) return candidate;
+    return aliases[candidate] || defaultLanguage;
+  };
   const entries = {
     "Preparing your workspace": ["A preparar o seu espaço de trabalho", "Preparando su espacio de trabajo"],
     "Close navigation": ["Fechar navegação", "Cerrar navegación"], "Open navigation": ["Abrir navegação", "Abrir navegación"],
@@ -118,38 +127,89 @@
     "Send request": ["Enviar pedido", "Enviar solicitud"], "Approve selected": ["Aprovar selecionados", "Aprobar seleccionados"], "Choose fields to approve": ["Escolha os campos a aprovar", "Elija los campos a aprobar"], "Fields answered": ["Campos respondidos", "Campos respondidos"],
     "No company access requests.": ["Sem pedidos de acesso da empresa.", "Sin solicitudes de acceso de la empresa."], "API contract": ["Contrato da API", "Contrato de la API"], "pending": ["pendente", "pendiente"], "approved": ["aprovado", "aprobado"], "declined": ["recusado", "rechazado"]
   };
-  const dictionaries = {pt: {}, es: {}};
-  Object.entries(entries).forEach(([english, values]) => { dictionaries.pt[english] = values[0]; dictionaries.es[english] = values[1]; });
+  const generatedCatalog = window.KomplianceTranslationCatalog || {};
+  const dictionaries = Object.fromEntries([...supported].map(locale => [locale, generatedCatalog[locale] || {}]));
+  Object.entries(entries).forEach(([english, values]) => {
+    dictionaries["pt-BR"][english] ||= values[0];
+    dictionaries["es-ES"][english] ||= values[1];
+  });
+  const dynamicTemplates = {
+    "en-IE": {
+      showing: "Showing {0} to {1} of {2} entries", unread: "{0} unread",
+      upload: "Uploading {0} of {1}: {2}", history: "{0} history events",
+      historyOne: "{0} history event", documents: "{0} documents uploaded.", document: "{0} document uploaded.",
+    },
+    "pl-PL": {
+      showing: "Wyświetlanie od {0} do {1} z {2} wpisów", unread: "{0} nieprzeczytanych",
+      upload: "Przesyłanie {0} z {1}: {2}", history: "{0} zdarzeń w historii",
+      historyOne: "{0} zdarzenie w historii", documents: "Przesłano {0} dokumentów.", document: "Przesłano {0} dokument.",
+    },
+    "ro-RO": {
+      showing: "Se afișează de la {0} la {1} din {2} înregistrări", unread: "{0} necitite",
+      upload: "Se încarcă {0} din {1}: {2}", history: "{0} evenimente în istoric",
+      historyOne: "{0} eveniment în istoric", documents: "Au fost încărcate {0} documente.", document: "A fost încărcat {0} document.",
+    },
+    "pt-BR": {
+      showing: "Exibindo de {0} a {1} de {2} registros", unread: "{0} não lidas",
+      upload: "Enviando {0} de {1}: {2}", history: "{0} eventos no histórico",
+      historyOne: "{0} evento no histórico", documents: "{0} documentos enviados.", document: "{0} documento enviado.",
+    },
+    "uk-UA": {
+      showing: "Показано від {0} до {1} з {2} записів", unread: "{0} непрочитаних",
+      upload: "Завантаження {0} з {1}: {2}", history: "{0} подій в історії",
+      historyOne: "{0} подія в історії", documents: "Завантажено документів: {0}.", document: "Завантажено {0} документ.",
+    },
+    "ru-RU": {
+      showing: "Показано с {0} по {1} из {2} записей", unread: "{0} непрочитанных",
+      upload: "Загрузка {0} из {1}: {2}", history: "{0} событий в истории",
+      historyOne: "{0} событие в истории", documents: "Загружено документов: {0}.", document: "Загружен {0} документ.",
+    },
+    "es-ES": {
+      showing: "Mostrando del {0} al {1} de {2} registros", unread: "{0} sin leer",
+      upload: "Subiendo {0} de {1}: {2}", history: "{0} eventos del historial",
+      historyOne: "{0} evento del historial", documents: "{0} documentos subidos.", document: "{0} documento subido.",
+    },
+  };
   const originalText = new WeakMap();
   const originalAttributes = new WeakMap();
-  let language = (() => { try { return localStorage.getItem("kompliance_language") || "en"; } catch { return "en"; } })();
-  if (!supported.has(language)) language = "en";
+  let language = (() => { try { return normalizeLanguage(localStorage.getItem("kompliance_language")); } catch { return defaultLanguage; } })();
   let applying = false;
+  const interpolate = (template, values) => values.reduce((result, value, index) => result.replaceAll(`{${index}}`, value), template);
   const translateValue = (value) => {
-    if (language === "en") return value;
+    if (language === defaultLanguage) return value;
     const trimmed = value.trim();
-    const direct = dictionaries[language][trimmed];
+    const direct = dictionaries[language]?.[trimmed];
     if (direct) return value.replace(trimmed, direct);
     const showing = trimmed.match(/^Showing (\d+) to (\d+) of (\d+) entries$/);
-    if (showing) return language === "pt" ? `A mostrar ${showing[1]} a ${showing[2]} de ${showing[3]} registos` : `Mostrando ${showing[1]} a ${showing[2]} de ${showing[3]} registros`;
+    if (showing) return interpolate(dynamicTemplates[language].showing, showing.slice(1));
+    const unread = trimmed.match(/^(\d+) unread$/);
+    if (unread) return interpolate(dynamicTemplates[language].unread, unread.slice(1));
+    const upload = trimmed.match(/^Uploading (\d+) of (\d+): (.+)$/);
+    if (upload) return interpolate(dynamicTemplates[language].upload, upload.slice(1));
+    const history = trimmed.match(/^(\d+) history events?$/);
+    if (history) return interpolate(dynamicTemplates[language][history[1] === "1" ? "historyOne" : "history"], history.slice(1));
+    const documents = trimmed.match(/^(\d+) documents? uploaded\.$/);
+    if (documents) return interpolate(dynamicTemplates[language][documents[1] === "1" ? "document" : "documents"], documents.slice(1));
     return value;
   };
   const translateNode = (node) => {
     if (node.nodeType === Node.TEXT_NODE && node.parentElement && !["SCRIPT", "STYLE", "TEXTAREA"].includes(node.parentElement.tagName)) {
+      if (node.parentElement.closest("#app-language, #language, [name='preferred_language'], [data-i18n-skip]")) return;
       if (!originalText.has(node)) originalText.set(node, node.nodeValue);
       const original = originalText.get(node);
-      const translated = language === "en" ? original : translateValue(original);
+      const translated = language === defaultLanguage ? original : translateValue(original);
       if (node.nodeValue !== translated) node.nodeValue = translated;
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const element = node;
+    if (element.matches("[data-i18n-skip]")) return;
     const names = ["placeholder", "title", "aria-label"];
     if (!originalAttributes.has(element)) originalAttributes.set(element, {});
     const originals = originalAttributes.get(element);
     names.forEach(name => {
       if (element.hasAttribute(name) && !(name in originals)) originals[name] = element.getAttribute(name);
-      if (name in originals) element.setAttribute(name, language === "en" ? originals[name] : translateValue(originals[name]));
+      if (name in originals) element.setAttribute(name, language === defaultLanguage ? originals[name] : translateValue(originals[name]));
     });
     [...element.childNodes].forEach(translateNode);
   };
@@ -164,7 +224,7 @@
     applying = false;
   };
   const setLanguage = (value, notify = true) => {
-    language = supported.has(value) ? value : "en";
+    language = normalizeLanguage(value);
     try { localStorage.setItem("kompliance_language", language); } catch {}
     apply(document.body);
     if (notify) window.dispatchEvent(new CustomEvent("kompliance:language", {detail: {language}}));
@@ -175,7 +235,12 @@
     mutations.forEach(mutation => mutation.addedNodes.forEach(translateNode));
     applying = false;
   });
-  window.KomplianceI18n = {apply, setLanguage, getLanguage: () => language, supported: [...supported]};
+  window.KomplianceI18n = {
+    apply, setLanguage, getLanguage: () => language, normalizeLanguage,
+    supported: [...supported], t: translateValue,
+    formatDate: (value, options = {}) => new Intl.DateTimeFormat(language, options).format(value),
+    formatNumber: (value, options = {}) => new Intl.NumberFormat(language, options).format(value),
+  };
   document.addEventListener("DOMContentLoaded", () => {
     apply(document.body);
     document.querySelectorAll("#app-language, #language").forEach(selector => selector.addEventListener("change", event => setLanguage(event.target.value)));

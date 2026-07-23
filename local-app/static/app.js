@@ -462,11 +462,24 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+const LANGUAGE_CHOICES = [
+  ["en-IE", "English"], ["pl-PL", "Polski"], ["ro-RO", "Română"],
+  ["pt-BR", "Português (Brasil)"], ["uk-UA", "Українська"],
+  ["ru-RU", "Русский"], ["es-ES", "Español"],
+];
+
+function languageOptions(selected) {
+  const normalized = window.KomplianceI18n?.normalizeLanguage(selected) || "en-IE";
+  return LANGUAGE_CHOICES
+    .map(([value, label]) => `<option value="${value}" ${value === normalized ? "selected" : ""}>${label}</option>`)
+    .join("");
+}
+
 function formatDate(value) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return escapeHtml(value);
-  return new Intl.DateTimeFormat("en-IE", {
+  return new Intl.DateTimeFormat(window.KomplianceI18n?.getLanguage() || "en-IE", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -531,7 +544,7 @@ function isoDate(timestamp) {
 function displayDate(value) {
   const timestamp = dateValue(value);
   if (!timestamp) return "";
-  return new Intl.DateTimeFormat("en-IE", {
+  return new Intl.DateTimeFormat(window.KomplianceI18n?.getLanguage() || "en-IE", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -556,7 +569,7 @@ function calendarMarkup() {
   const { dateStart, dateEnd } = state.listFilters;
   const rangeStart = dateStart && dateEnd ? [dateStart, dateEnd].sort()[0] : "";
   const rangeEnd = dateStart && dateEnd ? [dateStart, dateEnd].sort()[1] : "";
-  const monthLabel = new Intl.DateTimeFormat("en-IE", {
+  const monthLabel = new Intl.DateTimeFormat(window.KomplianceI18n?.getLanguage() || "en-IE", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
@@ -3812,7 +3825,7 @@ async function renderWorkflowCentre() {
       <article class="card workflow-card"><div class="local-section-heading"><span>Messages</span><h2>Worker conversations</h2></div><div class="workflow-list">${conversations.length ? conversations.map(item => `<article class="workflow-item"><header><div><strong>${escapeHtml(item.subject)}</strong><small>${escapeHtml(item.worker_name)}</small></div></header><div class="message-thread">${item.messages.map(message => `<p><strong>${escapeHtml(message.sender_name)}</strong><span>${escapeHtml(message.message)}</span><small>${escapeHtml(displayDate(message.created_at) || message.created_at)}</small></p>`).join("")}</div><form class="conversation-reply" data-conversation="${item.id}"><input name="message" placeholder="Reply to worker" required><button class="button button-secondary button-small">Send</button></form></article>`).join("") : `<p class="table-empty">Conversations begin when a worker-linked request is created.</p>`}</div></article>
       <article class="card workflow-card"><div class="local-section-heading"><span>Inbox</span><h2>Notifications</h2></div><div class="workflow-list">${notifications.length ? notifications.map(item => `<button class="notification-row ${item.read_at ? "" : "unread"}" data-notification-read="${item.id}" type="button"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.message)}</span><small>${item.read_at ? "Read" : "Mark as read"} · ${escapeHtml(displayDate(item.created_at) || item.created_at)}</small></button>`).join("") : `<p class="table-empty">No notifications.</p>`}</div></article>
       ${user.role === "admin" ? `<article class="card workflow-card"><div class="local-section-heading"><span>Routing</span><h2>Department contacts</h2></div><form id="department-contact-form" class="workflow-form"><label>Department<select name="department">${(departmentResult.departments || []).map(value => `<option>${escapeHtml(value)}</option>`).join("")}</select></label><label>Linked user<select name="user_id"><option value="">No linked account</option>${companyUsers.map(item => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select></label><label>Name<input name="name" required></label><label>Email<input name="email" type="email"></label><label>Phone<input name="phone"></label><button class="button button-primary">Add contact</button></form><div class="workflow-list">${contacts.map(item => `<div class="contact-row"><span><strong>${escapeHtml(item.department)} · ${escapeHtml(item.name)}</strong><small>${escapeHtml(item.email || item.phone || "No direct contact")}</small></span><button class="button button-secondary button-small" data-contact-toggle="${item.id}" data-active="${item.active ? "0" : "1"}" type="button">${item.active ? "Deactivate" : "Activate"}</button></div>`).join("") || `<p class="table-empty">No contacts configured.</p>`}</div></article>` : ""}
-      <article class="card workflow-card"><div class="local-section-heading"><span>Delivery</span><h2>Notification preferences</h2><p>Unavailable channels remain fail-closed until an approved provider is configured.</p></div><form id="company-preferences-form" class="preference-form">${["in_app", "email", "sms", "push"].map(channel => `<label><input type="checkbox" name="${channel}" ${preferences[channel] ? "checked" : ""}> ${channel.replace("_", " ")} <small>${channels[channel]?.available ? "Available" : escapeHtml(channels[channel]?.reason || "Unavailable")}</small></label>`).join("")}<label>Language<select name="preferred_language"><option value="en" ${preferences.preferred_language === "en" ? "selected" : ""}>English</option><option value="pt" ${preferences.preferred_language === "pt" ? "selected" : ""}>Português</option><option value="es" ${preferences.preferred_language === "es" ? "selected" : ""}>Español</option></select></label><button class="button button-primary">Save preferences</button></form></article>
+      <article class="card workflow-card"><div class="local-section-heading"><span>Delivery</span><h2>Notification preferences</h2><p>Unavailable channels remain fail-closed until an approved provider is configured.</p></div><form id="company-preferences-form" class="preference-form">${["in_app", "email", "sms", "push"].map(channel => `<label><input type="checkbox" name="${channel}" ${preferences[channel] ? "checked" : ""}> ${channel.replace("_", " ")} <small>${channels[channel]?.available ? "Available" : escapeHtml(channels[channel]?.reason || "Unavailable")}</small></label>`).join("")}<label>Language<select name="preferred_language">${languageOptions(preferences.preferred_language)}</select></label><button class="button button-primary">Save preferences</button></form></article>
     </section>`;
   document.querySelector("#workflow-request-form")?.addEventListener("submit", async event => { event.preventDefault(); try { await api("/api/company/requests", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); showToast("Request created and routed."); await renderWorkflowCentre(); } catch (error) { showToast(error.message, "error"); } });
   document.querySelectorAll("[data-request-save]").forEach(button => button.addEventListener("click", async () => { const id = button.dataset.requestSave; try { await api(`/api/company/requests/${id}/status`, { method: "POST", body: JSON.stringify({ status: document.querySelector(`[data-request-status="${id}"]`).value, note: document.querySelector(`[data-request-note="${id}"]`).value }) }); showToast("Request status updated."); await renderWorkflowCentre(); } catch (error) { showToast(error.message, "error"); } }));
@@ -4411,6 +4424,7 @@ window.addEventListener("kompliance:language", async (event) => {
   } catch (error) {
     showToast(`Language saved on this device only: ${error.message}`, "error");
   }
+  await route();
 });
 document.querySelector("#year").textContent = new Date().getFullYear();
 bindRouteLinks();

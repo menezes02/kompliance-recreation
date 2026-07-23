@@ -290,7 +290,7 @@ class UniversalWorkerEndToEndTest(unittest.TestCase):
         self.assertEqual(worker.json(
             "/api/worker/preferences", "PUT",
             {"in_app": True, "email": True, "sms": False, "push": False, "preferred_language": "pt"}, worker_csrf,
-        )[1]["preferred_language"], "pt")
+        )[1]["preferred_language"], "pt-BR")
         status, worker_preferences, _ = worker.json("/api/worker/preferences")
         self.assertFalse(worker_preferences["channels"]["sms"]["available"])
         self.assertEqual(tenant_client.json(
