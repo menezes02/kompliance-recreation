@@ -109,4 +109,18 @@ It cannot select or delete protected snapshot records, submissions, certificates
 
 ## Production release
 
+Before a customer review, open `/review` as an administrator. Technical blockers must
+be zero. Attention items are customer or owner decisions; a controlled hold is expected
+for the automatic scheduler until recipients and intervals are approved.
+
+Run the review-centre regression locally:
+
+```powershell
+python verify_review_centre.py
+```
+
+The read-only browser regression is `verify_review_browser.mjs`. It checks desktop and
+390-pixel layout, the acceptance form, safe diagnostic controls, console errors and
+page overflow. It performs no customer-record mutation and sends no email.
+
 Do not deploy from this runbook alone. Complete `RELEASE_CHECKLIST.md`, record the approved commit and rollback commit, verify both application and data backups, and obtain the named product and technical approvals first.

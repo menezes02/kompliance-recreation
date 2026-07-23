@@ -29,6 +29,7 @@ source application:
 | `/workflow-centre` | Routed requests, conversations, induction approvals, notifications and department contacts |
 | `/worker/#inbox` | Worker access approval/decline, request creation, conversation replies, induction status and notifications |
 | `/system` | System/privacy controls, notification delivery history and authorised tenant migration history |
+| `/review` | Administrator pilot readiness, controlled email diagnostics, acceptance checklist and secret-free evidence export |
 | `/api/v1/shared-workers` | Bearer-token REST list for active consent grants |
 | `/api/v1/workers/:id/*` | Scoped profile, certification, training, induction and document resources |
 | `/api/openapi.json` | OpenAPI 3.1 contract for consent and integration routes |

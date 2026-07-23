@@ -49,6 +49,7 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Confirm `KOMPLIANCE_APP_AUTH=1` in the deployed application container.
 - [ ] Confirm HTTPS and the expected hostname.
 - [ ] Confirm `/api/health/ready` returns HTTP 200 through the deployed route.
+- [ ] Confirm **Review & acceptance** reports zero technical blockers.
 - [ ] Confirm container names remain `kompliance_app_example` and `kompliance_gateway_example`.
 - [ ] Confirm the application data volume is writable only where local records are stored.
 - [ ] Confirm the imported source archive is mounted read-only.
@@ -88,6 +89,9 @@ This checklist protects the existing customer-facing installation and preserves 
 - [ ] Duplicate reminder preparation does not create duplicate queue records.
 - [ ] Delivery history records attempts, sent status and safe failure detail.
 - [ ] System & privacy shows database integrity, storage and service state.
+- [ ] Review & acceptance aggregates role, MFA, email, privacy, scheduler, backup and sign-off status.
+- [ ] A controlled test email records a sent result or a safely redacted provider failure.
+- [ ] Review evidence can be printed and downloaded without secrets or full diagnostic recipients.
 - [ ] Retention cleanup reports zero protected records.
 - [ ] Password recovery tokens expire, work once, and revoke prior sessions.
 - [ ] Five failed logins lock the account for the configured period.

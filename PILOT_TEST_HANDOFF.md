@@ -24,14 +24,15 @@ The 3,597 imported customer records and the 3,077-file source archive are protec
 ## Primary company test
 
 1. Sign in and confirm that the dashboard identifies Kingscroft Developments.
-2. Open GA1, GA2 and GA3.
-3. Search by site and worker, change creation order and select one submitted date.
-4. Select two dates in the same calendar and confirm the date range is applied.
-5. Open a PDF in the browser viewer, download it and return to the same filtered list.
-6. Inspect Workers, Inductions, Training, Assets, Documents and Source archive.
-7. Confirm that imported records have no edit or delete controls.
-8. Open Expiry centre and inspect overdue, due-soon, current and missing-date groups.
-9. Open System & privacy and confirm database status `ok` and automated operations `Healthy`.
+2. As the administrator, open **Review & acceptance** and confirm there are no technical blockers.
+3. Open GA1, GA2 and GA3.
+4. Search by site and worker, change creation order and select one submitted date.
+5. Select two dates in the same calendar and confirm the date range is applied.
+6. Open a PDF in the browser viewer, download it and return to the same filtered list.
+7. Inspect Workers, Inductions, Training, Assets, Documents and Source archive.
+8. Confirm that imported records have no edit or delete controls.
+9. Open Expiry centre and inspect overdue, due-soon, current and missing-date groups.
+10. Open System & privacy and confirm database status `ok` and automated operations `Healthy`.
 
 ## Local workflow test
 
@@ -71,6 +72,17 @@ All records created by this sequence are local pilot records; they do not change
 - No public demo tenant exists because the current instruction is to use the authorised private customer data and not create demo documents.
 
 These holds do not block the controlled private pilot.
+
+## Review & acceptance record
+
+The administrator records completed review paths, Marcelo's name, the product owner,
+the technical owner, the decision and any conditions under **Review & acceptance**.
+The page can print the review and download a secret-free JSON evidence file.
+
+If an approved test recipient is available, use **Controlled test email** once. The
+action requires confirmation, sends no customer document, masks the recipient in the
+readiness evidence and records success or a redacted provider error in the audit trail.
+Do not enable the automatic scheduler during this test.
 
 ## Feedback to record
 

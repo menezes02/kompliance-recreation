@@ -3658,6 +3658,8 @@ function applyAuthContext() {
   document.querySelector("#audit-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#users-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#system-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#review-link")?.classList.toggle("hidden", user.role !== "admin");
+  document.querySelector("#review-menu-link")?.classList.toggle("hidden", user.role !== "admin");
   document.querySelector("#source-archive-link")?.classList.toggle("hidden", Number(user.company_id || 1) !== 1);
   document.querySelector("#logout-action")?.classList.toggle("hidden", !state.auth.enabled);
 }
@@ -4064,6 +4066,157 @@ async function renderSystemCentre() {
   });
 }
 
+async function renderReviewCentre() {
+  if (state.auth.user?.role !== "admin") {
+    app.innerHTML = `${pageHeader("Review & acceptance")}<section class="card error-card"><h2>Administrator access required</h2><p>This centre contains release decisions and delivery diagnostics.</p></section>`;
+    return;
+  }
+  const result = await api("/api/review/readiness");
+  const checks = result.checks || [];
+  const counts = result.counts || {};
+  const acceptance = result.acceptance || {};
+  const checklist = acceptance.checklist || {};
+  const checklistItems = result.checklist_items || [];
+  const diagnostics = result.email_diagnostics || [];
+  const decisionOptions = [
+    ["pending", "Pending"],
+    ["accepted", "Accepted"],
+    ["accepted_with_conditions", "Accepted with conditions"],
+    ["rejected", "Rejected"],
+  ];
+  const statusCopy = {
+    pass: "Complete",
+    attention: "Action needed",
+    hold: "Controlled hold",
+    block: "Blocking",
+  };
+  app.innerHTML = `
+    ${pageHeader(
+      "Review & acceptance",
+      "Pilot readiness, controlled diagnostics and customer sign-off",
+      `<div class="page-header-actions"><button class="button button-secondary" id="review-export" type="button">Download evidence</button><button class="button button-primary" id="review-print" type="button">Print review</button></div>`,
+    )}
+    <section class="review-hero ${result.commercial_release_ready ? "review-hero-ready" : ""}">
+      <div>
+        <span>Release position</span>
+        <h2>${result.commercial_release_ready ? "Accepted for commercial release" : result.pilot_ready ? "Controlled pilot ready" : "Technical blocker present"}</h2>
+        <p>${result.commercial_release_ready ? "All recorded review gates are complete." : "Imported customer records remain read-only. Open decisions are shown below."}</p>
+      </div>
+      <div class="review-score">
+        <strong>${Number(counts.pass || 0)}</strong>
+        <span>complete</span>
+        <small>${Number(counts.attention || 0)} action · ${Number(counts.hold || 0)} hold · ${Number(counts.block || 0)} block</small>
+      </div>
+    </section>
+    <section class="review-summary-grid">
+      <article><span>Technical blockers</span><strong>${Number(counts.block || 0)}</strong><small>Must be zero for testing</small></article>
+      <article><span>Open decisions</span><strong>${Number(counts.attention || 0)}</strong><small>Customer or owner action</small></article>
+      <article><span>Controlled holds</span><strong>${Number(counts.hold || 0)}</strong><small>Intentional pilot safeguards</small></article>
+      <article><span>Review paths</span><strong>${Object.values(checklist).filter(Boolean).length}/${checklistItems.length}</strong><small>Recorded by the reviewer</small></article>
+    </section>
+    <section class="review-check-grid">
+      ${checks.map((item) => `
+        <article class="review-check review-${escapeHtml(item.status)}">
+          <header><span>${escapeHtml(statusCopy[item.status] || item.status)}</span><strong>${escapeHtml(item.label)}</strong></header>
+          <p>${escapeHtml(item.detail)}</p>
+          ${item.action && item.status !== "pass" ? `<small>${escapeHtml(item.action)}</small>` : ""}
+        </article>
+      `).join("")}
+    </section>
+    <section class="review-layout">
+      <article class="card review-card">
+        <div class="local-section-heading"><span>Customer record</span><h2>Pilot acceptance</h2><p>Save progress during the review. A final decision must name its owners.</p></div>
+        <form id="review-acceptance-form" class="review-form">
+          <label>Reviewer name<input name="reviewer_name" value="${escapeHtml(acceptance.reviewer_name || "")}" maxlength="160"></label>
+          <label>Product / release owner<input name="product_owner" value="${escapeHtml(acceptance.product_owner || "")}" maxlength="160"></label>
+          <label>Technical owner<input name="technical_owner" value="${escapeHtml(acceptance.technical_owner || "")}" maxlength="160"></label>
+          <label>Decision<select name="decision">${decisionOptions.map(([value, label]) => `<option value="${value}" ${acceptance.decision === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+          <fieldset class="review-checklist">
+            <legend>Acceptance paths completed</legend>
+            ${checklistItems.map((item) => `<label><input type="checkbox" name="review_item" value="${escapeHtml(item.key)}" ${checklist[item.key] ? "checked" : ""}><span>${escapeHtml(item.label)}</span></label>`).join("")}
+          </fieldset>
+          <label class="review-wide">Conditions, defects or deferred work<textarea name="conditions" maxlength="4000" rows="6">${escapeHtml(acceptance.conditions || "")}</textarea></label>
+          <div class="review-form-actions"><button class="button button-primary">Save acceptance record</button><small>${acceptance.updated_at ? `Last updated ${escapeHtml(displayDate(acceptance.updated_at) || acceptance.updated_at)}` : "No customer decision recorded yet."}</small></div>
+        </form>
+      </article>
+      <aside class="card review-card">
+        <div class="local-section-heading"><span>Delivery diagnostic</span><h2>Controlled test email</h2><p>Sends one plain test message through the configured provider. No customer record is attached.</p></div>
+        <dl class="system-detail-list">
+          <div><dt>Provider</dt><dd>${escapeHtml(result.email?.provider === "gmail_oauth" ? "Gmail API" : result.email?.provider || "Not configured")}</dd></div>
+          <div><dt>Configuration</dt><dd>${result.email?.configured ? "Ready" : "Incomplete"}</dd></div>
+          <div><dt>Delivery switch</dt><dd>${result.email?.enabled ? "Enabled" : "Disabled"}</dd></div>
+          <div><dt>Scheduler</dt><dd>${result.scheduler?.enabled ? "Enabled" : "Disabled for pilot"}</dd></div>
+        </dl>
+        <form id="review-email-test-form" class="review-email-form">
+          <label>Controlled recipient<input name="recipient" type="email" autocomplete="off" placeholder="reviewer@example.ie" required></label>
+          <button class="button button-primary" ${result.email?.enabled && result.email?.configured ? "" : "disabled"}>Send controlled test</button>
+        </form>
+        <div class="review-diagnostic-history">
+          <h3>Diagnostic history</h3>
+          ${diagnostics.length ? diagnostics.map((row) => `<div><span><strong>${escapeHtml(row.recipient)}</strong><small>${escapeHtml(displayDate(row.created_at) || row.created_at)} · ${escapeHtml(row.provider)}</small></span><span class="status review-${escapeHtml(row.status === "sent" ? "pass" : "attention")}">${escapeHtml(row.status)}</span>${row.safe_error ? `<small>${escapeHtml(row.safe_error)}</small>` : ""}</div>`).join("") : `<p class="table-empty">No controlled application-path test recorded.</p>`}
+        </div>
+      </aside>
+    </section>
+    <p class="review-generated">Readiness evidence generated ${escapeHtml(result.generated_at || "")}. Secrets and full diagnostic recipients are excluded from this view and export.</p>
+  `;
+  document.querySelector("#review-acceptance-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const selected = new Set(new FormData(form).getAll("review_item"));
+    const savedChecklist = Object.fromEntries(checklistItems.map((item) => [item.key, selected.has(item.key)]));
+    try {
+      await api("/api/review/acceptance", {
+        method: "PUT",
+        body: JSON.stringify({
+          reviewer_name: values.reviewer_name,
+          product_owner: values.product_owner,
+          technical_owner: values.technical_owner,
+          decision: values.decision,
+          conditions: values.conditions,
+          checklist: savedChecklist,
+        }),
+      });
+      showToast("Acceptance progress saved and audited.");
+      await renderReviewCentre();
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  document.querySelector("#review-email-test-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const recipient = new FormData(event.currentTarget).get("recipient");
+    if (!window.confirm(`Send one controlled Kompliance test email to ${recipient}?`)) return;
+    try {
+      await api("/api/review/email-test", {
+        method: "POST",
+        body: JSON.stringify({ recipient, confirmation: "SEND_CONTROLLED_TEST" }),
+      });
+      showToast("Controlled email delivered and recorded.");
+      await renderReviewCentre();
+    } catch (error) {
+      showToast(`Controlled test failed: ${error.message}`, "error");
+      await renderReviewCentre();
+    }
+  });
+  document.querySelector("#review-print")?.addEventListener("click", () => window.print());
+  document.querySelector("#review-export")?.addEventListener("click", () => {
+    const evidence = {
+      generated_at: result.generated_at,
+      pilot_ready: result.pilot_ready,
+      commercial_release_ready: result.commercial_release_ready,
+      counts: result.counts,
+      checks: result.checks,
+      acceptance: result.acceptance,
+      email_diagnostics: result.email_diagnostics,
+    };
+    const blob = new Blob([JSON.stringify(evidence, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `kompliance-review-evidence-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+}
+
 async function renderComplianceCentre(days = 30) {
   const [result, notificationResult, configuration] = await Promise.all([
     api(`/api/compliance/reminders?days=${days}`),
@@ -4133,6 +4286,8 @@ async function route() {
       await renderWorkflowCentre();
     } else if (path === "/system") {
       await renderSystemCentre();
+    } else if (path === "/review") {
+      await renderReviewCentre();
     } else if (path === "/local-workflows") {
       await renderPilotWorkflows();
     } else if (path === "/compliance") {

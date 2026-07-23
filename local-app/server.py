@@ -86,6 +86,17 @@ DEFAULT_SETTINGS = {
     "retention_days": "365",
 }
 
+PILOT_REVIEW_CHECKLIST = (
+    ("ga_search_filters", "GA1, GA2 and GA3 search, filters and date range"),
+    ("archived_pdf_view", "Archived PDF browser view and download"),
+    ("role_boundaries", "Viewer, Editor and Administrator role boundaries"),
+    ("local_form_workflow", "Local form draft, signature, submission and PDF report"),
+    ("worker_consent", "Worker QR access request, approval and revocation"),
+    ("responsive_layout", "Desktop and mobile review paths"),
+    ("email_delivery", "Controlled application email delivery"),
+    ("backup_restore", "Backup verification and restore rehearsal"),
+)
+
 WORKER_DOCUMENT_CATEGORIES = {
     "GA1", "GA2", "GA3", "AF3", "RAMS", "Induction", "Certification",
     "Licence", "Medical Certificate", "Training", "Other",
@@ -734,10 +745,44 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pilot_acceptance (
+                company_id INTEGER PRIMARY KEY,
+                reviewer_name TEXT NOT NULL DEFAULT '',
+                product_owner TEXT NOT NULL DEFAULT '',
+                technical_owner TEXT NOT NULL DEFAULT '',
+                decision TEXT NOT NULL DEFAULT 'pending',
+                conditions TEXT NOT NULL DEFAULT '',
+                checklist_json TEXT NOT NULL DEFAULT '{}',
+                updated_by INTEGER,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS email_diagnostic_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                requested_by INTEGER,
+                recipient TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL,
+                safe_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(requested_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
         connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_requests_company_status ON workflow_requests(company_id, status)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_workflow_conversations_company_worker ON workflow_conversations(company_id, worker_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON in_app_notifications(recipient_type, recipient_id, read_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_migration_runs_company ON tenant_migration_runs(company_id, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_email_diagnostics_company ON email_diagnostic_runs(company_id, created_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_worker_access_requests_worker_status ON worker_access_requests(worker_id, status, created_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_worker_access_requests_company_status ON worker_access_requests(company_id, status, created_at)")
         connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_access_requests_one_pending ON worker_access_requests(company_id, worker_id) WHERE status = 'pending'")
@@ -1173,6 +1218,298 @@ def public_email_configuration() -> dict:
             if provider == "gmail_oauth"
             else os.environ.get("KOMPLIANCE_SMTP_SECURITY", "starttls").strip().lower()
         ),
+    }
+
+
+def mask_email(value: str) -> str:
+    """Return a useful diagnostic label without exposing a full recipient."""
+    text = str(value or "").strip()
+    if "@" not in text:
+        return "invalid recipient"
+    local, domain = text.rsplit("@", 1)
+    visible = local[:1] if local else ""
+    return f"{visible}{'*' * max(min(len(local) - 1, 6), 2)}@{domain}"
+
+
+def safe_delivery_error(error: Exception) -> str:
+    """Remove configured long-lived credentials from a provider error."""
+    message = str(error) or error.__class__.__name__
+    for name in (
+        "KOMPLIANCE_GMAIL_CLIENT_SECRET",
+        "KOMPLIANCE_GMAIL_REFRESH_TOKEN",
+        "KOMPLIANCE_SMTP_PASSWORD",
+    ):
+        secret = os.environ.get(name, "")
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    return re.sub(r"\s+", " ", message).strip()[:300]
+
+
+def pilot_acceptance_state(company_id: int = 1) -> dict:
+    checklist = {key: False for key, _ in PILOT_REVIEW_CHECKLIST}
+    with DB_LOCK, connect_database() as connection:
+        row = connection.execute(
+            "SELECT * FROM pilot_acceptance WHERE company_id = ?", (company_id,)
+        ).fetchone()
+    if row is None:
+        return {
+            "reviewer_name": "",
+            "product_owner": "",
+            "technical_owner": "",
+            "decision": "pending",
+            "conditions": "",
+            "checklist": checklist,
+            "updated_at": "",
+        }
+    try:
+        saved = json.loads(row["checklist_json"])
+    except (TypeError, json.JSONDecodeError):
+        saved = {}
+    checklist.update({key: bool(saved.get(key)) for key in checklist})
+    return {
+        "reviewer_name": row["reviewer_name"],
+        "product_owner": row["product_owner"],
+        "technical_owner": row["technical_owner"],
+        "decision": row["decision"],
+        "conditions": row["conditions"],
+        "checklist": checklist,
+        "updated_at": row["updated_at"],
+    }
+
+
+def review_operations_status() -> dict:
+    status = {
+        "available": False,
+        "ready": False,
+        "backups_enabled": False,
+        "last_backup_at": "",
+        "last_backup_error": "",
+    }
+    try:
+        saved = json.loads(
+            (DATA_ROOT / "operations" / "status.json").read_text(encoding="utf-8")
+        )
+        if isinstance(saved, dict):
+            status.update(saved)
+            status["available"] = True
+    except (OSError, json.JSONDecodeError):
+        pass
+    return status
+
+
+def build_review_readiness(company_id: int = 1) -> dict:
+    settings = application_settings(company_id)
+    email = public_email_configuration()
+    acceptance = pilot_acceptance_state(company_id)
+    operations = review_operations_status()
+    with DB_LOCK, connect_database() as connection:
+        integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+        role_rows = connection.execute(
+            "SELECT role, COUNT(*) AS total FROM users WHERE company_id = ? AND active = 1 GROUP BY role",
+            (company_id,),
+        ).fetchall()
+        roles = {row["role"]: row["total"] for row in role_rows}
+        mfa_enabled = connection.execute(
+            "SELECT COUNT(*) FROM users WHERE company_id = ? AND active = 1 AND mfa_enabled = 1",
+            (company_id,),
+        ).fetchone()[0]
+        setting_rows = connection.execute(
+            "SELECT key FROM company_settings WHERE company_id = ?", (company_id,)
+        ).fetchall()
+        explicit_settings = {row["key"] for row in setting_rows}
+        record_rows = connection.execute(
+            "SELECT payload FROM records WHERE company_id = ?", (company_id,)
+        ).fetchall()
+        email_runs = connection.execute(
+            "SELECT id, recipient, provider, status, safe_error, created_at "
+            "FROM email_diagnostic_runs WHERE company_id = ? ORDER BY id DESC LIMIT 20",
+            (company_id,),
+        ).fetchall()
+    protected_records = 0
+    local_records = 0
+    for row in record_rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if is_protected_payload(payload):
+            protected_records += 1
+        elif payload.get("local_only"):
+            local_records += 1
+    diagnostic_history = [
+        {
+            "id": row["id"],
+            "recipient": mask_email(row["recipient"]),
+            "provider": row["provider"],
+            "status": row["status"],
+            "safe_error": row["safe_error"],
+            "created_at": row["created_at"],
+        }
+        for row in email_runs
+    ]
+    last_email_run = diagnostic_history[0] if diagnostic_history else None
+    last_email_success = (
+        last_email_run if last_email_run and last_email_run["status"] == "sent" else None
+    )
+    checklist_completed = sum(bool(value) for value in acceptance["checklist"].values())
+    checklist_total = len(PILOT_REVIEW_CHECKLIST)
+
+    def check(key, label, status, detail, action=""):
+        return {
+            "key": key,
+            "label": label,
+            "status": status,
+            "detail": detail,
+            "action": action,
+        }
+
+    all_roles_present = all(roles.get(role, 0) > 0 for role in ("viewer", "editor", "admin"))
+    settings_approved = {
+        "privacy_contact": bool(settings.get("privacy_contact", "").strip()),
+        "compliance_recipient": bool(settings.get("compliance_recipient", "").strip()),
+        "retention_days": "retention_days" in explicit_settings,
+        "reminder_days": "reminder_days" in explicit_settings,
+    }
+    checks = [
+        check(
+            "database",
+            "Database integrity",
+            "pass" if integrity == "ok" else "block",
+            f"SQLite quick check: {integrity}",
+        ),
+        check(
+            "protected_boundary",
+            "Imported snapshot boundary",
+            "pass" if company_id != 1 or protected_records > 0 else "block",
+            f"{protected_records:,} protected records; {local_records:,} isolated local records",
+        ),
+        check(
+            "roles",
+            "Pilot role coverage",
+            "pass" if all_roles_present else "block",
+            f"Admin {roles.get('admin', 0)} · Editor {roles.get('editor', 0)} · Viewer {roles.get('viewer', 0)}",
+            "Create any missing pilot account.",
+        ),
+        check(
+            "mfa",
+            "Administrator MFA",
+            "pass" if mfa_enabled else "attention",
+            f"{mfa_enabled} active account{'s' if mfa_enabled != 1 else ''} enrolled",
+            "Enrol at least one administrator under Security settings.",
+        ),
+        check(
+            "email_configuration",
+            "Email provider",
+            "pass" if email["enabled"] and email["configured"] else "attention",
+            f"{'Enabled' if email['enabled'] else 'Disabled'} · {email['provider']} · {'configured' if email['configured'] else 'incomplete'}",
+            "Complete the approved sender configuration.",
+        ),
+        check(
+            "email_test",
+            "Controlled email test",
+            "pass" if last_email_success else "attention",
+            (
+                f"Last successful test {last_email_success['created_at']}"
+                if last_email_success
+                else "No successful application-path diagnostic recorded"
+            ),
+            "Send one controlled diagnostic from this review centre.",
+        ),
+        check(
+            "privacy_contact",
+            "Privacy contact",
+            "pass" if settings_approved["privacy_contact"] else "attention",
+            "Configured" if settings_approved["privacy_contact"] else "Awaiting an approved contact",
+            "Record Marcelo’s approved privacy contact.",
+        ),
+        check(
+            "compliance_recipient",
+            "Compliance recipient",
+            "pass" if settings_approved["compliance_recipient"] else "attention",
+            "Configured" if settings_approved["compliance_recipient"] else "Awaiting an approved recipient",
+            "Record the recipient before reminder delivery.",
+        ),
+        check(
+            "retention",
+            "Retention approval",
+            "pass" if settings_approved["retention_days"] else "attention",
+            (
+                f"{settings.get('retention_days', '365')} days recorded"
+                if settings_approved["retention_days"]
+                else f"Default {settings.get('retention_days', '365')} days; approval not recorded"
+            ),
+            "Record the approved local-data retention period.",
+        ),
+        check(
+            "reminders",
+            "Reminder interval approval",
+            "pass" if settings_approved["reminder_days"] else "attention",
+            (
+                f"{settings.get('reminder_days', '30')} days recorded"
+                if settings_approved["reminder_days"]
+                else f"Default {settings.get('reminder_days', '30')} days; approval not recorded"
+            ),
+            "Record the approved reminder window.",
+        ),
+        check(
+            "scheduler",
+            "Automatic scheduler",
+            "hold" if not SCHEDULER_STATE["enabled"] else "pass",
+            "Disabled for controlled pilot" if not SCHEDULER_STATE["enabled"] else "Enabled",
+            "Keep disabled until recipients and intervals are approved.",
+        ),
+        check(
+            "backups",
+            "Automated backup service",
+            "pass"
+            if operations.get("ready")
+            and operations.get("backups_enabled")
+            and not operations.get("last_backup_error")
+            else "attention",
+            (
+                f"Healthy · last backup {operations.get('last_backup_at') or 'recorded'}"
+                if operations.get("ready") and not operations.get("last_backup_error")
+                else "No healthy operations backup status is available"
+            ),
+            "Verify a backup and empty-directory restore rehearsal.",
+        ),
+        check(
+            "acceptance_checklist",
+            "Pilot acceptance checklist",
+            "pass" if checklist_completed == checklist_total else "attention",
+            f"{checklist_completed} of {checklist_total} review paths recorded",
+            "Complete the remaining review paths with Marcelo.",
+        ),
+        check(
+            "release_decision",
+            "Customer release decision",
+            "pass"
+            if acceptance["decision"] in {"accepted", "accepted_with_conditions"}
+            else "attention",
+            acceptance["decision"].replace("_", " ").title(),
+            "Record the named customer decision.",
+        ),
+    ]
+    counts = {
+        status: sum(item["status"] == status for item in checks)
+        for status in ("pass", "attention", "hold", "block")
+    }
+    return {
+        "generated_at": utc_now(),
+        "pilot_ready": counts["block"] == 0,
+        "commercial_release_ready": counts["block"] == 0
+        and counts["attention"] == 0
+        and acceptance["decision"] in {"accepted", "accepted_with_conditions"},
+        "counts": counts,
+        "checks": checks,
+        "acceptance": acceptance,
+        "checklist_items": [
+            {"key": key, "label": label} for key, label in PILOT_REVIEW_CHECKLIST
+        ],
+        "email": email,
+        "email_diagnostics": diagnostic_history,
+        "scheduler": dict(SCHEDULER_STATE),
+        "operations": operations,
     }
 
 
@@ -4147,6 +4484,168 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             }
         )
 
+    def handle_review_readiness(self, user) -> None:
+        self.send_json(build_review_readiness(int(user.get("company_id", 1))))
+
+    def handle_review_acceptance_update(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        decision = str(payload.get("decision", "pending")).strip().lower()
+        allowed_decisions = {
+            "pending",
+            "accepted",
+            "accepted_with_conditions",
+            "rejected",
+        }
+        if decision not in allowed_decisions:
+            self.send_json({"error": "Select a valid review decision."}, HTTPStatus.BAD_REQUEST)
+            return
+        text_values = {}
+        for key, maximum in (
+            ("reviewer_name", 160),
+            ("product_owner", 160),
+            ("technical_owner", 160),
+            ("conditions", 4000),
+        ):
+            value = str(payload.get(key, "")).strip()
+            if len(value) > maximum:
+                self.send_json({"error": f"{key} is too long."}, HTTPStatus.BAD_REQUEST)
+                return
+            text_values[key] = value
+        supplied_checklist = payload.get("checklist", {})
+        if not isinstance(supplied_checklist, dict):
+            self.send_json({"error": "Checklist must be an object."}, HTTPStatus.BAD_REQUEST)
+            return
+        checklist = {
+            key: bool(supplied_checklist.get(key)) for key, _ in PILOT_REVIEW_CHECKLIST
+        }
+        company_id = int(user.get("company_id", 1))
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            connection.execute(
+                """
+                INSERT INTO pilot_acceptance(
+                    company_id, reviewer_name, product_owner, technical_owner,
+                    decision, conditions, checklist_json, updated_by, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(company_id) DO UPDATE SET
+                    reviewer_name = excluded.reviewer_name,
+                    product_owner = excluded.product_owner,
+                    technical_owner = excluded.technical_owner,
+                    decision = excluded.decision,
+                    conditions = excluded.conditions,
+                    checklist_json = excluded.checklist_json,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    company_id,
+                    text_values["reviewer_name"],
+                    text_values["product_owner"],
+                    text_values["technical_owner"],
+                    decision,
+                    text_values["conditions"],
+                    json.dumps(checklist),
+                    user.get("id") or None,
+                    now,
+                ),
+            )
+            connection.commit()
+        completed = sum(checklist.values())
+        self.write_audit(
+            user,
+            "pilot_acceptance_updated",
+            "pilot_acceptance",
+            summary=f"Decision {decision}; checklist {completed}/{len(checklist)}",
+        )
+        self.send_json(build_review_readiness(company_id))
+
+    def handle_review_email_test(self, user) -> None:
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        if payload.get("confirmation") != "SEND_CONTROLLED_TEST":
+            self.send_json(
+                {"error": "Exact controlled-test confirmation is required."},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+        recipient = str(payload.get("recipient", "")).strip().lower()
+        if (
+            len(recipient) > 254
+            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", recipient)
+        ):
+            self.send_json(
+                {"error": "Enter one valid controlled-test recipient."},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+        configuration = public_email_configuration()
+        company_id = int(user.get("company_id", 1))
+        created_at = utc_now()
+        status = "failed"
+        safe_error = ""
+        try:
+            send_notification_email(
+                {
+                    "recipient": recipient,
+                    "subject": "Kompliance controlled delivery test",
+                    "message": (
+                        "This controlled message confirms that the Kompliance application "
+                        f"can deliver email through its configured provider.\n\nTest time: {created_at}\n"
+                        "No customer document or personal record is attached."
+                    ),
+                }
+            )
+            status = "sent"
+        except Exception as error:
+            safe_error = safe_delivery_error(error)
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO email_diagnostic_runs(
+                    company_id, requested_by, recipient, provider, status, safe_error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    company_id,
+                    user.get("id") or None,
+                    recipient,
+                    configuration["provider"],
+                    status,
+                    safe_error,
+                    created_at,
+                ),
+            )
+            connection.commit()
+            diagnostic_id = cursor.lastrowid
+        self.write_audit(
+            user,
+            "controlled_email_test",
+            "email_diagnostic_runs",
+            diagnostic_id,
+            f"{configuration['provider']} diagnostic {status} for {mask_email(recipient)}",
+        )
+        response = {
+            "id": diagnostic_id,
+            "status": status,
+            "recipient": mask_email(recipient),
+            "provider": configuration["provider"],
+            "created_at": created_at,
+            "safe_error": safe_error,
+        }
+        if status != "sent":
+            response["error"] = safe_error or "Controlled email test failed."
+        self.send_json(
+            response,
+            HTTPStatus.CREATED if status == "sent" else HTTPStatus.BAD_GATEWAY,
+        )
+
     def handle_notifications_send(self, user) -> None:
         try:
             payload = self.read_json_body()
@@ -4772,6 +5271,11 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             if status_user is not None:
                 self.handle_system_status(status_user)
             return
+        if path == "/api/review/readiness":
+            review_user = self.require_user({"admin"})
+            if review_user is not None:
+                self.handle_review_readiness(review_user)
+            return
         if path == "/api/compliance/reminders":
             self.handle_compliance_reminders(parsed.query)
             return
@@ -4996,6 +5500,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 return
             self.handle_retention_cleanup(user)
             return
+        if parsed.path == "/api/review/email-test":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_review_email_test(user)
+            return
         if parsed.path.startswith("/api/resources/"):
             self.handle_resource_create(parsed.path)
             return
@@ -5034,6 +5544,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
                 return
             self.handle_settings_update(user)
+            return
+        if parsed.path == "/api/review/acceptance":
+            if user.get("role") != "admin":
+                self.send_json({"error": "Administrator role required."}, HTTPStatus.FORBIDDEN)
+                return
+            self.handle_review_acceptance_update(user)
             return
         department_parts = parsed.path.strip("/").split("/")
         if len(department_parts) == 4 and department_parts[:3] == ["api", "company", "departments"] and department_parts[3].isdigit():

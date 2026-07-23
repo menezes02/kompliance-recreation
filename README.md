@@ -46,6 +46,12 @@ Then open `http://127.0.0.1:8090/`.
 
 Worker self-registration is available at `http://127.0.0.1:8090/worker/`. The company application exposes QR requests and consented profiles at `/shared-workers`. See `QR_ACCESS_REQUESTS.md` for the approval lifecycle and `UNIVERSAL_WORKER_API.md` for REST integration. The OpenAPI 3.1 contract is served at `/api/openapi.json`.
 
+Administrators can open `/review` for the Review & Acceptance Centre. It combines
+database, protected-record, role, MFA, email, privacy, scheduler, backup and customer
+acceptance evidence without changing the imported snapshot. The controlled test-email
+action requires explicit confirmation, stores only safe diagnostic history and never
+returns Gmail OAuth credentials.
+
 Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
 The controlled customer test path is documented in `PILOT_TEST_HANDOFF.md`, with formal sign-off in `PILOT_ACCEPTANCE_CHECKLIST.md`.
 

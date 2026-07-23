@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
-
 :root {
   --navy: #07365c;
   --navy-dark: #052944;
@@ -32,7 +30,7 @@ body {
   min-height: 100vh;
   margin: 0;
   color: var(--text);
-  font-family: "Inter", sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   background:
     radial-gradient(circle at 62% 62%, rgba(0, 228, 255, 0.22), transparent 30%),
@@ -5585,3 +5583,162 @@ body.auth-screen .app-shell {
 @media (max-width:900px) { .access-request-layout { grid-template-columns:1fr; } .request-field-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:560px) { .request-field-grid { grid-template-columns:1fr; } .access-request-list article { grid-template-columns:1fr auto; } .access-request-list article > small { grid-column:1/-1; } }
 .page-header-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.65rem; }
+
+/* Review and acceptance centre */
+.review-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 1.5rem;
+  border: 1px solid #a9d9cd;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f1fbf7 0%, #eef7fb 100%);
+}
+.review-hero span,
+.review-hero p,
+.review-summary-grid span,
+.review-summary-grid small,
+.review-generated { color: var(--ink-muted); }
+.review-hero h2 { margin: .25rem 0; color: var(--navy); font-size: clamp(1.45rem, 3vw, 2.2rem); }
+.review-hero p { margin: 0; }
+.review-hero-ready { border-color: #5fbca5; background: linear-gradient(135deg, #eafaf4 0%, #f3fbf8 100%); }
+.review-score { min-width: 150px; text-align: right; }
+.review-score strong { display: block; color: var(--accent); font-size: 3rem; line-height: 1; }
+.review-score span,
+.review-score small { display: block; }
+.review-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .9rem;
+  margin-bottom: 1rem;
+}
+.review-summary-grid article {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+.review-summary-grid strong { display: block; margin: .25rem 0; color: var(--navy); font-size: 1.8rem; }
+.review-check-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .8rem;
+  margin-bottom: 1rem;
+}
+.review-check {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-left-width: 5px;
+  border-radius: 14px;
+  background: #fff;
+}
+.review-check header { display: grid; gap: .25rem; }
+.review-check header span { font-size: .72rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.review-check p { margin: .55rem 0 .25rem; color: var(--ink); }
+.review-check small { color: var(--ink-muted); }
+.review-pass { border-left-color: #149777; }
+.review-pass header span { color: #08745d; }
+.review-attention { border-left-color: #d99a25; }
+.review-attention header span { color: #9b6410; }
+.review-hold { border-left-color: #5d83a6; }
+.review-hold header span { color: #315f84; }
+.review-block { border-left-color: #cf4352; }
+.review-block header span { color: #a52e40; }
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr);
+  gap: 1rem;
+  align-items: start;
+}
+.review-card { padding: 1.35rem; }
+.review-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; margin-top: 1rem; }
+.review-form > label,
+.review-email-form label {
+  display: grid;
+  gap: .4rem;
+  color: var(--ink-muted);
+  font-size: .8rem;
+  font-weight: 700;
+}
+.review-form input,
+.review-form select,
+.review-form textarea,
+.review-email-form input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #b8ccd3;
+  border-radius: .7rem;
+  padding: .75rem;
+  background: #f9fcfd;
+  color: var(--ink);
+  font: inherit;
+  box-shadow: inset 0 1px 2px rgba(7, 54, 92, .04);
+}
+.review-form input:focus,
+.review-form select:focus,
+.review-form textarea:focus,
+.review-email-form input:focus { outline: 3px solid rgba(13, 172, 114, .18); border-color: var(--green-dark); }
+.review-form textarea { resize: vertical; }
+.review-wide,
+.review-checklist,
+.review-form-actions { grid-column: 1 / -1; }
+.review-checklist {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .55rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.review-checklist legend { padding: 0 .35rem; color: var(--ink-muted); font-size: .8rem; font-weight: 800; }
+.review-checklist label { display: flex; gap: .55rem; align-items: flex-start; }
+.review-checklist input { width: auto; margin-top: .2rem; }
+.review-form-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.review-form-actions small { color: var(--ink-muted); }
+.review-email-form { display: grid; gap: .75rem; margin: 1rem 0 1.25rem; }
+.review-diagnostic-history { display: grid; gap: .5rem; }
+.review-diagnostic-history h3 { margin-bottom: .2rem; }
+.review-diagnostic-history > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .35rem .75rem;
+  padding-top: .65rem;
+  border-top: 1px solid var(--line);
+}
+.review-diagnostic-history > div span:first-child { display: grid; }
+.review-diagnostic-history > div > small { grid-column: 1 / -1; color: #a33b43; }
+.review-generated { margin: 1rem 0 0; font-size: .78rem; text-align: right; }
+@media (max-width: 1050px) {
+  .review-summary-grid,
+  .review-check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .review-hero,
+  .review-summary-grid,
+  .review-check-grid,
+  .review-form,
+  .review-checklist { grid-template-columns: 1fr; }
+  .review-score { text-align: left; }
+  .review-wide,
+  .review-checklist,
+  .review-form-actions { grid-column: auto; }
+}
+@media print {
+  .sidebar,
+  .workspace-header,
+  .footer,
+  .page-header-actions,
+  .review-email-test-form,
+  .review-form-actions { display: none !important; }
+  .workspace,
+  .app-shell { margin: 0; padding: 0; max-width: none; }
+  .review-layout,
+  .review-check-grid,
+  .review-summary-grid { break-inside: avoid; }
+  .review-check,
+  .review-card { box-shadow: none; }
+}
