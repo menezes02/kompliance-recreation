@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en-IE">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b6f5c">
+  <title>Site induction registration · Kompliance</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/induction-static/induction-register.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Kompliance home"><span>K</span><strong>Kompliance</strong></a>
+    <label class="language"><span>Language</span><select id="language" aria-label="Language"><option value="en-IE">English</option><option value="pl-PL">Polski</option><option value="ro-RO">Română</option><option value="pt-BR">Português (Brasil)</option><option value="uk-UA">Українська</option><option value="ru-RU">Русский</option><option value="es-ES">Español</option></select></label>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Site induction</p>
+        <h1 id="page-title">Worker registration</h1>
+        <p id="page-context">Loading the secure site form…</p>
+      </div>
+      <aside class="site-chip"><span>Assigned site</span><strong id="site-name">—</strong></aside>
+    </section>
+
+    <section id="notice" class="notice hidden" role="alert"></section>
+    <section id="loading" class="loading-card" aria-live="polite">
+      <span class="spinner"></span>
+      <div><strong>Preparing registration</strong><p>Loading the current site requirements.</p></div>
+    </section>
+
+    <form id="registration-form" class="form-stack hidden" novalidate>
+      <section class="form-card">
+        <header><span>1</span><div><h2>Worker details</h2><p>Your contact and emergency information.</p></div></header>
+        <div class="field-grid">
+          <label><span>Worker name <b>*</b></span><input name="name" autocomplete="name" required></label>
+          <label><span>Worker email <b>*</b></span><input name="email" type="email" autocomplete="email" required></label>
+          <label><span>Worker ID</span><input name="worker_id" autocomplete="off"></label>
+          <label class="phone-field"><span>Contact number <b>*</b></span><div><select name="country_code" aria-label="Country code" required></select><input name="phone_number" type="tel" inputmode="tel" autocomplete="tel-national" required></div></label>
+          <label><span>Name of person to contact <b>*</b></span><input name="emergency_contact_name" autocomplete="off" required></label>
+          <label class="phone-field"><span>Emergency contact number <b>*</b></span><div><select name="emergency_country_code" aria-label="Emergency country code" required></select><input name="emergency_phone_number" type="tel" inputmode="tel" required></div></label>
+          <label class="wide"><span>Emergency contact address <b>*</b></span><input name="emergency_contact_address" autocomplete="off" required></label>
+          <fieldset class="wide option-fieldset"><legend>Roles <b>*</b></legend><div id="role-options" class="option-grid"></div></fieldset>
+          <label class="wide"><span>Subcontractor <b>*</b></span><select name="subcontractors" id="subcontractors" multiple required size="6"></select><small>Choose “No Subcontractor” when this does not apply.</small></label>
+          <label class="wide file-field"><span>Worker photo</span><input name="photo" type="file" accept="image/png,image/jpeg"><small>Optional · PNG or JPEG · maximum 10 MB</small></label>
+        </div>
+      </section>
+
+      <section class="form-card">
+        <header><span>2</span><div><h2>Medical details</h2><p>Only provide information relevant to safe work and emergency support.</p></div></header>
+        <label><span>Details of relevant medical history</span><textarea name="medical_details" rows="4" placeholder="e.g. diabetes, epilepsy, allergies, heart condition etc."></textarea></label>
+      </section>
+
+      <section class="form-card">
+        <header><span>3</span><div><h2>Training records</h2><p>Select Yes only when you can provide the expiry date and evidence image.</p></div></header>
+        <div id="training-records" class="training-list"></div>
+      </section>
+
+      <section class="form-card">
+        <header><span>4</span><div><h2>Safe Pass details</h2><p>Confirm whether you hold a current Safe Pass.</p></div></header>
+        <fieldset class="yes-no"><legend>Do you have a Safe Pass? <b>*</b></legend><label><input type="radio" name="safe_pass_answer" value="yes" required> Yes</label><label><input type="radio" name="safe_pass_answer" value="no" required> No</label></fieldset>
+        <div id="safe-pass-fields" class="field-grid conditional hidden">
+          <label><span>Name <b>*</b></span><input name="safe_pass_name"></label>
+          <label><span>Registration number <b>*</b></span><input name="safe_pass_title"></label>
+          <label><span>Valid from <b>*</b></span><input name="safe_pass_valid_from" type="date"></label>
+          <label><span>Expiry date <b>*</b></span><input name="safe_pass_expiry_date" type="date"></label>
+          <label class="wide file-field"><span>Photo <b>*</b></span><input name="safe_pass_photo" type="file" accept="image/png,image/jpeg" multiple><small>PNG or JPEG · maximum 10 MB each</small></label>
+        </div>
+      </section>
+
+      <section class="form-card confirmation-card">
+        <header><span>5</span><div><h2>Confirmation</h2><p>Review the information before continuing.</p></div></header>
+        <label class="confirmation"><input type="checkbox" name="safety_confirmation" required><span>I confirm I have read my company's Safety Statement and RAMS. <b>*</b></span></label>
+      </section>
+
+      <section class="submit-card">
+        <div><strong>Ready to register?</strong><p>Your information is sent securely to this site's Kompliance workspace.</p></div>
+        <button id="submit-button" type="submit">Register &amp; Continue</button>
+      </section>
+    </form>
+
+    <section id="success" class="success-card hidden" role="status">
+      <span class="success-icon">✓</span>
+      <p class="eyebrow">Registration submitted</p>
+      <h2>Thank you. Your site registration is ready for review.</h2>
+      <p>Keep this reference if you need to contact the site team.</p>
+      <strong id="registration-reference"></strong>
+    </section>
+  </main>
+  <footer><a href="/privacy">Privacy and data handling</a><span>Kompliance · Health &amp; Safety Operations</span></footer>
+  <script src="/static/i18n-catalog.js?v=3"></script>
+  <script src="/static/i18n.js?v=3"></script>
+  <script src="/induction-static/induction-register.js?v=1"></script>
+</body>
+</html>

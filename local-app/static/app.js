@@ -394,6 +394,8 @@ const state = {
   calendarOpen: false,
   currentConfig: null,
   currentRows: [],
+  inductionSiteLinks: [],
+  inductionRegistrations: [],
 };
 
 function defaultListFilters(config = {}) {
@@ -1231,6 +1233,39 @@ function mountRecordInspector(markup, backdropClass, afterMount) {
   modalRoot.querySelector(".pdf-preview-close").focus();
 }
 
+function openInductionQr(link) {
+  mountRecordInspector(`
+    <div class="modal-backdrop record-inspector-backdrop induction-qr-backdrop">
+      <section class="record-inspector-modal induction-qr-modal" role="dialog" aria-modal="true" aria-labelledby="induction-qr-title">
+        <header class="pdf-preview-header">
+          <div><small>Site registration link</small><h2 id="induction-qr-title">${escapeHtml(link.site_name)} induction QR</h2></div>
+          <button class="pdf-preview-close" type="button" aria-label="Close induction QR">×</button>
+        </header>
+        <div class="record-inspector-content induction-qr-content">
+          <div class="induction-qr-image"><img src="${escapeHtml(link.qr_url)}" alt="${escapeHtml(link.site_name)} induction registration QR code"></div>
+          <div>
+            <p>Place this QR code at the site entrance or include it in the worker onboarding message.</p>
+            <label class="induction-link-field"><span>Registration address</span><input id="induction-registration-link" value="${escapeHtml(link.registration_url)}" readonly></label>
+            <div class="form-actions">
+              <button class="button button-secondary" id="copy-induction-link" type="button">Copy link</button>
+              <a class="button button-primary" href="${escapeHtml(link.registration_url)}" target="_blank" rel="noopener">Open registration form</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  `, "induction-qr-backdrop", () => {
+    modalRoot.querySelector("#copy-induction-link")?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(link.registration_url);
+        showToast("Induction registration link copied.");
+      } catch {
+        modalRoot.querySelector("#induction-registration-link")?.select();
+      }
+    });
+  });
+}
+
 function inductionStats(record) {
   const pages = Array.isArray(record?.pages?.pages) ? record.pages.pages : [];
   const blocks = pages.flatMap((page) => Array.isArray(page.blocks) ? page.blocks : []);
@@ -1881,7 +1916,22 @@ async function renderList(config) {
     q: state.search,
     limit: "5000",
   });
-  const result = await api(`/api/resources/${config.resource}?${query}`);
+  const [result, inductionLinkResult, inductionRegistrationResult] = await Promise.all([
+    api(`/api/resources/${config.resource}?${query}`),
+    config.viewMode === "induction" ? api("/api/company/induction-sites") : Promise.resolve({data: []}),
+    config.viewMode === "induction" ? api("/api/company/induction-registrations") : Promise.resolve({data: []}),
+  ]);
+  state.inductionSiteLinks = inductionLinkResult.data || [];
+  state.inductionRegistrations = inductionRegistrationResult.data || [];
+  const inductionLinksBySite = new Map(
+    state.inductionSiteLinks.map((link) => [String(link.site_name || "").trim().toLocaleLowerCase(), link]),
+  );
+  if (config.viewMode === "induction") {
+    result.data = result.data.map((row) => ({
+      ...row,
+      registration_link: inductionLinksBySite.get(String(row.site || "").trim().toLocaleLowerCase()) || null,
+    }));
+  }
   const filteredRows = applyListFilters(result.data, config);
   const filteredTotal = filteredRows.length;
   state.currentRows = filteredRows;
@@ -1937,6 +1987,13 @@ async function renderList(config) {
             ? `
               <button class="button-icon view-document" type="button" data-induction-preview="${row.id}"
                       title="Preview induction" aria-label="Preview induction ${escapeHtml(row.title || "record")}">Preview</button>
+              ${row.registration_link ? `
+                <button class="button-icon view-document" type="button" data-induction-qr="${row.registration_link.id}"
+                        title="View site QR" aria-label="View ${escapeHtml(row.site || "site")} induction QR">QR</button>
+                <a class="button-icon view-document" href="${escapeHtml(row.registration_link.registration_url)}"
+                   target="_blank" rel="noopener" title="Open worker registration"
+                   aria-label="Open ${escapeHtml(row.site || "site")} worker registration">Register</a>
+              ` : ""}
             `
             : config.viewMode === "asset"
             ? `
@@ -2393,6 +2450,22 @@ async function renderList(config) {
         : config.filterMode === "documents"
           ? documentFilters
           : "";
+  const inductionRegistrationSummary = config.viewMode === "induction" ? `
+    <section class="induction-registration-summary" aria-label="Worker induction registrations">
+      <div class="induction-registration-heading">
+        <div><span>QR registration inbox</span><h2>Worker registrations</h2></div>
+        <strong>${state.inductionRegistrations.filter((item) => item.status === "submitted").length} submitted</strong>
+      </div>
+      <div class="induction-registration-cards">
+        ${state.inductionRegistrations.length ? state.inductionRegistrations.slice(0, 5).map((item) => `
+          <article>
+            <div><strong>${escapeHtml(item.payload?.name || "Worker")}</strong><small>${escapeHtml(item.site_name || "No site")} · ${escapeHtml(item.reference || "")}</small></div>
+            <div><span class="status">${escapeHtml(String(item.status || "").replaceAll("_", " "))}</span><small>${Number(item.evidence_count || 0)} evidence file${Number(item.evidence_count || 0) === 1 ? "" : "s"}</small></div>
+          </article>
+        `).join("") : `<p>No QR registrations have been submitted yet.</p>`}
+      </div>
+    </section>
+  ` : "";
 
   app.innerHTML = `
     ${pageHeader(
@@ -2402,6 +2475,7 @@ async function renderList(config) {
         ? ""
         : `<button class="button button-primary" id="add-record">＋ ${escapeHtml(config.addLabel)}</button>`,
     )}
+    ${inductionRegistrationSummary}
     <section class="card table-card">
       <div class="table-toolbar">
         <label class="table-size">Show
@@ -2483,6 +2557,12 @@ function bindTableEvents(config) {
     button.addEventListener("click", () => {
       const record = state.currentRows.find((row) => String(row.id) === button.dataset.inductionPreview);
       if (record) openInductionViewer(record);
+    });
+  });
+  document.querySelectorAll("[data-induction-qr]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const link = state.inductionSiteLinks.find((item) => String(item.id) === button.dataset.inductionQr);
+      if (link) openInductionQr(link);
     });
   });
   document.querySelectorAll("[data-asset-details]").forEach((button) => {

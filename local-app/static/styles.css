@@ -4137,6 +4137,135 @@ body.auth-screen .app-shell {
   gap: 12px;
 }
 
+.induction-qr-modal {
+  width: min(760px, calc(100vw - 2rem));
+}
+
+.induction-qr-content {
+  display: grid;
+  grid-template-columns: minmax(210px, 270px) 1fr;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.induction-qr-image {
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  border: 1px solid #d8e5e1;
+  border-radius: 18px;
+  background: #f7fbfa;
+}
+
+.induction-qr-image img {
+  width: 100%;
+  max-width: 250px;
+  aspect-ratio: 1;
+}
+
+.induction-link-field {
+  display: grid;
+  gap: .45rem;
+  margin-top: 1rem;
+}
+
+.induction-link-field span {
+  color: #5f7387;
+  font-size: .78rem;
+  font-weight: 750;
+}
+
+.induction-link-field input {
+  width: 100%;
+}
+
+.induction-registration-summary {
+  margin-bottom: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #d8e5e1;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(23, 50, 77, .06);
+}
+
+.induction-registration-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .9rem;
+}
+
+.induction-registration-heading span {
+  color: #0b8068;
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.induction-registration-heading h2 {
+  margin: .2rem 0 0;
+  font-size: 1.15rem;
+}
+
+.induction-registration-heading > strong {
+  padding: .5rem .75rem;
+  border-radius: 999px;
+  background: #e3f5ef;
+  color: #08705c;
+  font-size: .78rem;
+}
+
+.induction-registration-cards {
+  display: grid;
+  gap: .55rem;
+}
+
+.induction-registration-cards article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .75rem .85rem;
+  border: 1px solid #e1ebe8;
+  border-radius: 12px;
+  background: #f9fcfb;
+}
+
+.induction-registration-cards article > div {
+  display: grid;
+  gap: .22rem;
+}
+
+.induction-registration-cards article > div:last-child {
+  justify-items: end;
+}
+
+.induction-registration-cards small {
+  color: #667b8f;
+}
+
+@media (max-width: 680px) {
+  .induction-qr-content {
+    grid-template-columns: 1fr;
+  }
+
+  .induction-qr-image img {
+    max-width: 220px;
+  }
+
+  .induction-registration-heading,
+  .induction-registration-cards article {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .induction-registration-cards article > div:last-child {
+    justify-items: start;
+  }
+}
+
 .induction-page-navigation {
   display: grid;
   align-content: start;

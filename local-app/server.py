@@ -45,6 +45,7 @@ DATABASE_PATH = DATA_ROOT / "kompliance.db"
 ARCHIVE_ROOT = APP_ROOT.parent / "source-archive"
 EXAMPLES_ROOT = APP_ROOT.parent / "examples"
 PRODUCTION_DATA_PATH = APP_ROOT.parent / "production-data" / "records.json"
+INDUCTION_REGISTRATION_SCHEMA_PATH = EXAMPLES_ROOT / "induction-registration.json"
 MAX_BODY_BYTES = 10 * 1024 * 1024
 DB_LOCK = threading.RLock()
 PROTECTED_RECORD_SOURCE = "production read-only export"
@@ -66,6 +67,8 @@ MFA_PERIOD_SECONDS = 30
 MFA_DIGITS = 6
 MFA_BACKUP_CODE_COUNT = 10
 API_RATE_LIMIT_PER_MINUTE = max(int(os.environ.get("KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE", "120")), 10)
+PUBLIC_INDUCTION_MAX_ATTEMPTS = 20
+PUBLIC_INDUCTION_WINDOW_MINUTES = 10
 STARTED_AT = utc_now() if "utc_now" in globals() else datetime.now(UTC).replace(microsecond=0).isoformat()
 SCHEDULER_STOP = threading.Event()
 GMAIL_OAUTH_LOCK = threading.Lock()
@@ -123,6 +126,53 @@ LANGUAGE_ALIASES = {
     "en": "en-IE", "pt": "pt-BR", "es": "es-ES", "pl": "pl-PL",
     "ro": "ro-RO", "uk": "uk-UA", "ru": "ru-RU",
 }
+
+
+@lru_cache(maxsize=1)
+def induction_registration_schema() -> dict:
+    if not INDUCTION_REGISTRATION_SCHEMA_PATH.exists():
+        return {}
+    return json.loads(INDUCTION_REGISTRATION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def ensure_induction_site_links(connection, company_id: int) -> None:
+    schema = induction_registration_schema()
+    site_ids = {
+        str(site.get("name", "")).strip().casefold(): str(site.get("id", ""))
+        for site in schema.get("sites", [])
+    }
+    rows = connection.execute(
+        "SELECT id, payload FROM records WHERE resource = 'inductions' AND company_id = ?",
+        (company_id,),
+    ).fetchall()
+    now = utc_now()
+    for row in rows:
+        payload = json.loads(row["payload"])
+        site_name = str(payload.get("site", "")).strip()
+        if not site_name:
+            continue
+        site_source_id = site_ids.get(site_name.casefold(), "")
+        connection.execute(
+            """
+            INSERT INTO induction_site_links(
+                company_id, induction_record_id, site_source_id, site_name,
+                public_token, active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(company_id, site_name) DO UPDATE SET
+                induction_record_id = excluded.induction_record_id,
+                site_source_id = excluded.site_source_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                company_id,
+                int(row["id"]),
+                site_source_id,
+                site_name,
+                secrets.token_urlsafe(32),
+                now,
+                now,
+            ),
+        )
 
 
 SEED_RECORDS = {
@@ -918,6 +968,67 @@ def initialize_database() -> None:
                 FOREIGN KEY(review_id) REFERENCES induction_reviews(id) ON DELETE CASCADE
             )
             """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS induction_site_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                induction_record_id INTEGER,
+                site_source_id TEXT,
+                site_name TEXT NOT NULL,
+                public_token TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(company_id, site_name),
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(induction_record_id) REFERENCES records(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_induction_site_links_company ON induction_site_links(company_id, active)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS induction_registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                site_link_id INTEGER NOT NULL,
+                reference TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'evidence_pending',
+                payload TEXT NOT NULL,
+                upload_token_hash TEXT,
+                upload_expires_at TEXT,
+                submitted_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                FOREIGN KEY(site_link_id) REFERENCES induction_site_links(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_induction_registrations_company ON induction_registrations(company_id, created_at)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS induction_registration_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                registration_id INTEGER NOT NULL,
+                field_key TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                stored_name TEXT NOT NULL UNIQUE,
+                content_type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(registration_id) REFERENCES induction_registrations(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_induction_registration_evidence_registration ON induction_registration_evidence(registration_id)"
         )
         connection.execute(
             """
@@ -1888,6 +1999,32 @@ def company_api_rate_limit(token_id: int) -> tuple[bool, int, int]:
         connection.commit()
     remaining = max(API_RATE_LIMIT_PER_MINUTE - attempts, 0)
     return attempts <= API_RATE_LIMIT_PER_MINUTE, remaining, retry_after
+
+
+def public_induction_rate_limit_allowed(limit_key: str) -> bool:
+    now = datetime.now(UTC)
+    window_start = now - timedelta(minutes=PUBLIC_INDUCTION_WINDOW_MINUTES)
+    key = f"public-induction:{limit_key}"
+    with DB_LOCK, connect_database() as connection:
+        row = connection.execute(
+            "SELECT window_started, attempts FROM rate_limits WHERE limit_key = ?",
+            (key,),
+        ).fetchone()
+        if row is None or datetime.fromisoformat(row["window_started"]) < window_start:
+            connection.execute(
+                "INSERT INTO rate_limits(limit_key, window_started, attempts) VALUES (?, ?, 1) "
+                "ON CONFLICT(limit_key) DO UPDATE SET window_started = excluded.window_started, attempts = 1",
+                (key, now.replace(microsecond=0).isoformat()),
+            )
+            connection.commit()
+            return True
+        attempts = int(row["attempts"] or 0) + 1
+        connection.execute(
+            "UPDATE rate_limits SET attempts = ? WHERE limit_key = ?",
+            (attempts, key),
+        )
+        connection.commit()
+    return attempts <= PUBLIC_INDUCTION_MAX_ATTEMPTS
 
 
 def write_system_audit(action: str, resource: str, summary: str = "") -> None:
@@ -4605,6 +4742,520 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             self.write_audit(actor, "workflow_message_sent", "workflow_conversations", conversation_id, row["subject"])
         self.send_json({"id": cursor.lastrowid, "conversation_id": conversation_id, "message": message, "created_at": now}, HTTPStatus.CREATED)
 
+    def public_induction_site(self, token: str):
+        if (
+            not token
+            or len(token) > 200
+            or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for character in token)
+        ):
+            return None
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """
+                SELECT induction_site_links.*, companies.name AS company_name,
+                       records.payload AS induction_payload
+                FROM induction_site_links
+                JOIN companies ON companies.id = induction_site_links.company_id
+                JOIN records ON records.id = induction_site_links.induction_record_id
+                WHERE induction_site_links.public_token = ?
+                  AND induction_site_links.active = 1
+                  AND companies.active = 1
+                  AND records.resource = 'inductions'
+                """,
+                (token,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def handle_public_induction_schema(self, token: str) -> None:
+        site = self.public_induction_site(token)
+        if site is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        schema = induction_registration_schema()
+        if not schema:
+            self.send_json({"error": "The induction registration schema is unavailable."}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        selected_site = next(
+            (
+                item
+                for item in schema.get("sites", [])
+                if str(item.get("id", "")) == str(site.get("site_source_id", ""))
+                or str(item.get("name", "")).casefold() == str(site.get("site_name", "")).casefold()
+            ),
+            {"id": str(site.get("site_source_id", "")), "name": site.get("site_name", "")},
+        )
+        public_schema = {
+            key: value
+            for key, value in schema.items()
+            if key not in {"capture_policy", "source_path", "subcontractors_by_site"}
+        }
+        public_schema["company"] = site["company_name"]
+        public_schema["sites"] = [selected_site]
+        public_schema["selected_site"] = selected_site
+        public_schema["subcontractors"] = [
+            {"id": str(item[0]), "name": str(item[1])}
+            for item in schema.get("subcontractors_by_site", {}).get(str(selected_site.get("id", "")), [])
+        ]
+        induction = json.loads(site["induction_payload"])
+        public_schema["induction"] = {
+            "title": induction.get("title", f"{site['site_name']} Site Induction"),
+            "site": site["site_name"],
+            "status": induction.get("status", "Active"),
+        }
+        self.send_json(public_schema)
+
+    def normalize_public_induction_registration(self, payload: dict, site: dict) -> tuple[dict, list[str]]:
+        schema = induction_registration_schema()
+        errors: list[str] = []
+
+        def text_value(name: str, label: str, required=True, maximum=500) -> str:
+            value = str(payload.get(name, "")).strip()
+            if required and not value:
+                errors.append(f"{label} is required.")
+            if len(value) > maximum:
+                errors.append(f"{label} is too long.")
+            return value[:maximum]
+
+        name = text_value("name", "Worker name", maximum=180)
+        email = text_value("email", "Worker email", maximum=254).lower()
+        if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            errors.append("Worker email is invalid.")
+        worker_id = text_value("worker_id", "Worker ID", required=False, maximum=120)
+        country_code = text_value("country_code", "Country code", maximum=12)
+        emergency_country_code = text_value("emergency_country_code", "Emergency country code", maximum=12)
+        allowed_calling_codes = set(schema.get("calling_codes", []))
+        if country_code not in allowed_calling_codes:
+            errors.append("Country code is invalid.")
+        if emergency_country_code not in allowed_calling_codes:
+            errors.append("Emergency country code is invalid.")
+        phone_number = text_value("phone_number", "Contact number", maximum=40)
+        emergency_phone_number = text_value("emergency_phone_number", "Emergency contact number", maximum=40)
+        emergency_contact_name = text_value("emergency_contact_name", "Emergency contact name", maximum=180)
+        emergency_contact_address = text_value("emergency_contact_address", "Emergency contact address", maximum=500)
+        medical_details = text_value("medical_details", "Medical details", required=False, maximum=4000)
+
+        role_ids = [
+            str(value)
+            for value in payload.get("roles", [])
+            if isinstance(value, (str, int))
+        ] if isinstance(payload.get("roles"), list) else []
+        allowed_roles = {str(item.get("id", "")): item for item in schema.get("roles", [])}
+        role_ids = list(dict.fromkeys(role_ids))
+        if not role_ids or any(role_id not in allowed_roles for role_id in role_ids):
+            errors.append("Select at least one valid role.")
+
+        site_id = str(site.get("site_source_id", ""))
+        available_subcontractors = {
+            str(item[0]): str(item[1])
+            for item in schema.get("subcontractors_by_site", {}).get(site_id, [])
+        }
+        subcontractor_ids = [
+            str(value)
+            for value in payload.get("subcontractors", [])
+            if isinstance(value, (str, int))
+        ] if isinstance(payload.get("subcontractors"), list) else []
+        subcontractor_ids = list(dict.fromkeys(subcontractor_ids))
+        if not subcontractor_ids:
+            errors.append("Select a subcontractor or No Subcontractor.")
+        elif any(value not in available_subcontractors for value in subcontractor_ids):
+            errors.append("A selected subcontractor is not available for this site.")
+
+        raw_training = payload.get("training_records", [])
+        training_by_id = {
+            str(item.get("question_id", "")): item
+            for item in raw_training
+            if isinstance(item, dict)
+        } if isinstance(raw_training, list) else {}
+        normalized_training = []
+        required_evidence = []
+        for question in schema.get("training_questions", []):
+            question_id = str(question.get("id", ""))
+            supplied = training_by_id.get(question_id, {})
+            answer = str(supplied.get("answer", "")).strip().lower()
+            if answer not in {"", "yes", "no"}:
+                errors.append(f"Training answer {question_id} is invalid.")
+                answer = ""
+            expiry_date = str(supplied.get("expiry_date", "")).strip()[:10]
+            if answer == "yes":
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry_date):
+                    errors.append(f"Expiry date is required for {question.get('question', 'training')}.")
+                required_evidence.append(f"training:{question_id}:photo")
+            normalized_training.append(
+                {
+                    "question_id": question_id,
+                    "question": question.get("question", ""),
+                    "answer": answer,
+                    "expiry_date": expiry_date if answer == "yes" else "",
+                }
+            )
+
+        supplied_safe_pass = payload.get("safe_pass", {})
+        supplied_safe_pass = supplied_safe_pass if isinstance(supplied_safe_pass, dict) else {}
+        safe_pass_answer = str(supplied_safe_pass.get("answer", "")).strip().lower()
+        if safe_pass_answer not in {"yes", "no"}:
+            errors.append("Choose Yes or No for Safe Pass.")
+        safe_pass = {"answer": safe_pass_answer}
+        if safe_pass_answer == "yes":
+            for field_name, label in (
+                ("name", "Safe Pass name"),
+                ("title", "Safe Pass registration number"),
+                ("valid_from", "Safe Pass valid-from date"),
+                ("expiry_date", "Safe Pass expiry date"),
+            ):
+                value = str(supplied_safe_pass.get(field_name, "")).strip()
+                if not value:
+                    errors.append(f"{label} is required.")
+                if field_name in {"valid_from", "expiry_date"} and value and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                    errors.append(f"{label} is invalid.")
+                safe_pass[field_name] = value[:180]
+            required_evidence.append("safe_pass:photo")
+
+        safety_confirmation = payload.get("safety_confirmation") is True
+        if not safety_confirmation:
+            errors.append("Confirm that the Safety Statement and RAMS have been read.")
+
+        normalized = {
+            "name": name,
+            "email": email,
+            "worker_id": worker_id,
+            "country_code": country_code,
+            "phone_number": phone_number,
+            "emergency_country_code": emergency_country_code,
+            "emergency_phone_number": emergency_phone_number,
+            "emergency_contact_name": emergency_contact_name,
+            "emergency_contact_address": emergency_contact_address,
+            "site": {"id": site_id, "name": site.get("site_name", "")},
+            "roles": [
+                {"id": role_id, "name": allowed_roles[role_id].get("name", "")}
+                for role_id in role_ids
+                if role_id in allowed_roles
+            ],
+            "subcontractors": [
+                {"id": value, "name": available_subcontractors[value]}
+                for value in subcontractor_ids
+                if value in available_subcontractors
+            ],
+            "medical_details": medical_details,
+            "training_records": normalized_training,
+            "safe_pass": safe_pass,
+            "safety_confirmation": safety_confirmation,
+            "required_evidence": sorted(set(required_evidence)),
+            "language": normalize_language(payload.get("language")),
+            "source": "local controlled workspace",
+            "local_only": True,
+        }
+        return normalized, errors
+
+    def public_induction_upload_context(self, token: str, registration_id: int):
+        supplied_token = self.headers.get("X-Upload-Token", "").strip()
+        if not supplied_token:
+            return None
+        digest = hashlib.sha256(supplied_token.encode("utf-8")).hexdigest()
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """
+                SELECT induction_registrations.*, induction_site_links.public_token,
+                       induction_site_links.site_name
+                FROM induction_registrations
+                JOIN induction_site_links ON induction_site_links.id = induction_registrations.site_link_id
+                WHERE induction_registrations.id = ?
+                  AND induction_site_links.public_token = ?
+                  AND induction_registrations.upload_token_hash = ?
+                  AND induction_registrations.upload_expires_at > ?
+                """,
+                (registration_id, token, digest, now),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def handle_public_induction_registration_create(self, token: str) -> None:
+        site = self.public_induction_site(token)
+        if site is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        address = self.client_address[0] if self.client_address else "unknown"
+        rate_key = hashlib.sha256(f"{token}:{address}".encode("utf-8")).hexdigest()
+        if not public_induction_rate_limit_allowed(rate_key):
+            self.send_json(
+                {"error": "Too many registration attempts. Please try again in 10 minutes."},
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"Retry-After": str(PUBLIC_INDUCTION_WINDOW_MINUTES * 60)},
+            )
+            return
+        try:
+            payload = self.read_json_body()
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        normalized, errors = self.normalize_public_induction_registration(payload, site)
+        if errors:
+            self.send_json({"error": errors[0], "errors": errors}, HTTPStatus.BAD_REQUEST)
+            return
+        now = utc_now()
+        raw_upload_token = secrets.token_urlsafe(32)
+        upload_digest = hashlib.sha256(raw_upload_token.encode("utf-8")).hexdigest()
+        upload_expires_at = (datetime.now(UTC) + timedelta(hours=2)).replace(microsecond=0).isoformat()
+        reference = f"IND-{datetime.now(UTC).strftime('%Y%m%d')}-{secrets.token_hex(4).upper()}"
+        status = "evidence_pending" if normalized["required_evidence"] else "ready"
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO induction_registrations(
+                    company_id, site_link_id, reference, status, payload,
+                    upload_token_hash, upload_expires_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    site["company_id"],
+                    site["id"],
+                    reference,
+                    status,
+                    json.dumps(normalized, ensure_ascii=False),
+                    upload_digest,
+                    upload_expires_at,
+                    now,
+                    now,
+                ),
+            )
+            connection.commit()
+        self.send_json(
+            {
+                "id": cursor.lastrowid,
+                "reference": reference,
+                "status": status,
+                "required_evidence": normalized["required_evidence"],
+                "upload_token": raw_upload_token,
+                "upload_expires_at": upload_expires_at,
+            },
+            HTTPStatus.CREATED,
+        )
+
+    def handle_public_induction_evidence(self, token: str, registration_id: int) -> None:
+        registration = self.public_induction_upload_context(token, registration_id)
+        if registration is None:
+            self.send_json({"error": "The evidence upload link is invalid or expired."}, HTTPStatus.FORBIDDEN)
+            return
+        if registration["status"] == "submitted":
+            self.send_json({"error": "This registration has already been submitted."}, HTTPStatus.CONFLICT)
+            return
+        field_key = unquote(self.headers.get("X-Field-Key", "")).strip()[:120]
+        original_name = Path(unquote(self.headers.get("X-File-Name", ""))).name
+        extension = Path(original_name).suffix.lower()
+        payload = json.loads(registration["payload"])
+        allowed_field_keys = set(payload.get("required_evidence", [])) | {"worker_photo"}
+        if field_key not in allowed_field_keys or extension not in {".png", ".jpg", ".jpeg"}:
+            self.send_json({"error": "A valid induction image field and PNG or JPEG file are required."}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            content = self.read_raw_body()
+        except ValueError as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        is_png = extension == ".png" and content.startswith(b"\x89PNG\r\n\x1a\n")
+        is_jpeg = extension in {".jpg", ".jpeg"} and content.startswith(b"\xff\xd8\xff")
+        if not (is_png or is_jpeg):
+            self.send_json({"error": "The uploaded file content is not a valid PNG or JPEG image."}, HTTPStatus.BAD_REQUEST)
+            return
+        evidence_root = DATA_ROOT / "induction-evidence" / str(registration["company_id"]) / str(registration_id)
+        evidence_root.mkdir(parents=True, exist_ok=True)
+        stored_name = f"{secrets.token_hex(12)}{extension}"
+        (evidence_root / stored_name).write_bytes(content)
+        now = utc_now()
+        with DB_LOCK, connect_database() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO induction_registration_evidence(
+                    registration_id, field_key, original_name, stored_name,
+                    content_type, size, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    registration_id,
+                    field_key,
+                    original_name,
+                    stored_name,
+                    "image/png" if is_png else "image/jpeg",
+                    len(content),
+                    now,
+                ),
+            )
+            connection.commit()
+        self.send_json(
+            {"id": cursor.lastrowid, "field_key": field_key, "original_name": original_name, "size": len(content)},
+            HTTPStatus.CREATED,
+        )
+
+    def handle_public_induction_complete(self, token: str, registration_id: int) -> None:
+        registration = self.public_induction_upload_context(token, registration_id)
+        if registration is None:
+            self.send_json({"error": "The registration completion link is invalid or expired."}, HTTPStatus.FORBIDDEN)
+            return
+        payload = json.loads(registration["payload"])
+        required = set(payload.get("required_evidence", []))
+        with DB_LOCK, connect_database() as connection:
+            uploaded = {
+                row["field_key"]
+                for row in connection.execute(
+                    "SELECT field_key FROM induction_registration_evidence WHERE registration_id = ?",
+                    (registration_id,),
+                ).fetchall()
+            }
+            missing = sorted(required - uploaded)
+            if missing:
+                self.send_json(
+                    {"error": "Required evidence is still missing.", "missing_evidence": missing},
+                    HTTPStatus.CONFLICT,
+                )
+                return
+            now = utc_now()
+            connection.execute(
+                """
+                UPDATE induction_registrations
+                SET status = 'submitted', submitted_at = ?, updated_at = ?,
+                    upload_token_hash = NULL, upload_expires_at = NULL
+                WHERE id = ?
+                """,
+                (now, now, registration_id),
+            )
+            notify_company_workflow_users(
+                connection,
+                int(registration["company_id"]),
+                "induction_registration",
+                "New site induction registration",
+                f"{payload.get('name', 'A worker')} registered for {registration['site_name']}.",
+                "/inductions",
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_log(user_id, actor, action, resource, record_id, summary, created_at, company_id)
+                VALUES (NULL, 'Public induction registration', 'submit', 'induction_registrations', ?, ?, ?, ?)
+                """,
+                (
+                    registration_id,
+                    f"{registration['reference']} submitted for {registration['site_name']}",
+                    now,
+                    registration["company_id"],
+                ),
+            )
+            connection.commit()
+        self.send_json(
+            {
+                "id": registration_id,
+                "reference": registration["reference"],
+                "status": "submitted",
+                "submitted_at": now,
+            }
+        )
+
+    def handle_company_induction_sites_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            ensure_induction_site_links(connection, int(user["company_id"]))
+            connection.commit()
+            rows = connection.execute(
+                """
+                SELECT induction_site_links.*, records.payload AS induction_payload
+                FROM induction_site_links
+                JOIN records ON records.id = induction_site_links.induction_record_id
+                WHERE induction_site_links.company_id = ?
+                ORDER BY induction_site_links.site_name
+                """,
+                (user["company_id"],),
+            ).fetchall()
+        base = self.application_base_url()
+        data = []
+        for row in rows:
+            item = dict(row)
+            induction = json.loads(item.pop("induction_payload"))
+            item["induction_title"] = induction.get("title", item["site_name"])
+            item["registration_url"] = f"{base}/induction/c/{item['public_token']}/register"
+            item["qr_url"] = f"/api/company/induction-sites/{item['id']}/qr"
+            data.append(item)
+        self.send_json({"data": data})
+
+    def handle_company_induction_site_qr(self, user, link_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                "SELECT * FROM induction_site_links WHERE id = ? AND company_id = ? AND active = 1",
+                (link_id, user["company_id"]),
+            ).fetchone()
+        if row is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        url = f"{self.application_base_url()}/induction/c/{row['public_token']}/register"
+        body = build_qr_svg(url, f"{row['site_name']} induction registration QR code")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_company_induction_registrations_get(self, user) -> None:
+        with DB_LOCK, connect_database() as connection:
+            rows = connection.execute(
+                """
+                SELECT induction_registrations.*, induction_site_links.site_name,
+                       COUNT(induction_registration_evidence.id) AS evidence_count
+                FROM induction_registrations
+                JOIN induction_site_links ON induction_site_links.id = induction_registrations.site_link_id
+                LEFT JOIN induction_registration_evidence
+                    ON induction_registration_evidence.registration_id = induction_registrations.id
+                WHERE induction_registrations.company_id = ?
+                GROUP BY induction_registrations.id
+                ORDER BY induction_registrations.id DESC
+                LIMIT 500
+                """,
+                (user["company_id"],),
+            ).fetchall()
+        data = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"])
+            item.pop("upload_token_hash", None)
+            item.pop("upload_expires_at", None)
+            data.append(item)
+        self.send_json({"data": data})
+
+    def handle_company_induction_evidence_file(self, user, registration_id: int, evidence_id: int) -> None:
+        with DB_LOCK, connect_database() as connection:
+            row = connection.execute(
+                """
+                SELECT induction_registration_evidence.*, induction_registrations.company_id
+                FROM induction_registration_evidence
+                JOIN induction_registrations
+                    ON induction_registrations.id = induction_registration_evidence.registration_id
+                WHERE induction_registration_evidence.id = ?
+                  AND induction_registration_evidence.registration_id = ?
+                  AND induction_registrations.company_id = ?
+                """,
+                (evidence_id, registration_id, user["company_id"]),
+            ).fetchone()
+        if row is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        root = (DATA_ROOT / "induction-evidence" / str(row["company_id"]) / str(registration_id)).resolve()
+        try:
+            resolved = (root / Path(row["stored_name"]).name).resolve(strict=True)
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if root not in resolved.parents:
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        stat = resolved.stat()
+        safe_name = Path(row["original_name"]).name.replace('"', "")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", row["content_type"])
+        self.send_header("Content-Length", str(stat.st_size))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
+        self.send_security_headers()
+        self.end_headers()
+        with resolved.open("rb") as handle:
+            while chunk := handle.read(256 * 1024):
+                self.wfile.write(chunk)
+
     def handle_company_inductions_get(self, user) -> None:
         with DB_LOCK, connect_database() as connection:
             rows = connection.execute(
@@ -5803,6 +6454,13 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path == "/api/public/companies":
             self.handle_public_companies()
             return
+        if path.startswith("/api/public/induction/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 4 and parts[:3] == ["api", "public", "induction"]:
+                self.handle_public_induction_schema(parts[3])
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+            return
         if path == "/api/openapi.json":
             self.send_file(STATIC_ROOT / "openapi.json", cache=True)
             return
@@ -5823,6 +6481,19 @@ class KomplianceHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/worker-static/"):
             self.send_file(STATIC_ROOT / path.removeprefix("/worker-static/"), cache=True)
+            return
+        if path.startswith("/induction-static/"):
+            self.send_file(STATIC_ROOT / path.removeprefix("/induction-static/"), cache=True)
+            return
+        if path.startswith("/induction/c/"):
+            parts = path.strip("/").split("/")
+            if len(parts) in {3, 4} and parts[:2] == ["induction", "c"] and (len(parts) == 3 or parts[3] == "register"):
+                if self.public_induction_site(parts[2]) is None:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                else:
+                    self.send_file(STATIC_ROOT / "induction-register.html")
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
             return
         if path.startswith("/worker/public/"):
             self.handle_public_worker_profile(path.removeprefix("/worker/public/").strip("/"))
@@ -5940,6 +6611,35 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         if path == "/api/company/induction-reviews":
             self.handle_company_inductions_get(self.request_user)
             return
+        if path == "/api/company/induction-sites":
+            self.handle_company_induction_sites_get(self.request_user)
+            return
+        if path == "/api/company/induction-registrations":
+            self.handle_company_induction_registrations_get(self.request_user)
+            return
+        induction_site_parts = path.strip("/").split("/")
+        if (
+            len(induction_site_parts) == 5
+            and induction_site_parts[:3] == ["api", "company", "induction-sites"]
+            and induction_site_parts[3].isdigit()
+            and induction_site_parts[4] == "qr"
+        ):
+            self.handle_company_induction_site_qr(self.request_user, int(induction_site_parts[3]))
+            return
+        if (
+            len(induction_site_parts) == 7
+            and induction_site_parts[:3] == ["api", "company", "induction-registrations"]
+            and induction_site_parts[3].isdigit()
+            and induction_site_parts[4] == "evidence"
+            and induction_site_parts[5].isdigit()
+            and induction_site_parts[6] == "file"
+        ):
+            self.handle_company_induction_evidence_file(
+                self.request_user,
+                int(induction_site_parts[3]),
+                int(induction_site_parts[5]),
+            )
+            return
         if path == "/api/company/notifications":
             self.handle_notifications_get(self.request_user, "user")
             return
@@ -5996,6 +6696,33 @@ class KomplianceHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/public/induction/"):
+            parts = unquote(parsed.path).strip("/").split("/")
+            if (
+                len(parts) == 5
+                and parts[:3] == ["api", "public", "induction"]
+                and parts[4] == "registrations"
+            ):
+                self.handle_public_induction_registration_create(parts[3])
+            elif (
+                len(parts) == 7
+                and parts[:3] == ["api", "public", "induction"]
+                and parts[4] == "registrations"
+                and parts[5].isdigit()
+                and parts[6] == "evidence"
+            ):
+                self.handle_public_induction_evidence(parts[3], int(parts[5]))
+            elif (
+                len(parts) == 7
+                and parts[:3] == ["api", "public", "induction"]
+                and parts[4] == "registrations"
+                and parts[5].isdigit()
+                and parts[6] == "complete"
+            ):
+                self.handle_public_induction_complete(parts[3], int(parts[5]))
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+            return
         if parsed.path == "/api/auth/setup":
             self.handle_auth_setup()
             return

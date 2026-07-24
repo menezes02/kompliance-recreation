@@ -523,6 +523,19 @@ The list, create, view, expiry tracking, and document behavior match GA1.
 | `/induction/c/:companyToken` | Public worker entry/resume screen |
 | `/induction/c/:companyToken/register` | Public worker registration |
 
+The recreation also provides one locally generated, tenant-scoped QR token per
+site. These tokens are not copied from the source application:
+
+| Local route | Purpose |
+|---|---|
+| `/api/company/induction-sites` | Authenticated list of site QR links |
+| `/api/company/induction-sites/:id/qr` | Authenticated SVG QR image |
+| `/api/company/induction-registrations` | Authenticated QR-registration inbox |
+| `/api/public/induction/:siteToken` | Public, site-scoped registration schema |
+| `/api/public/induction/:siteToken/registrations` | Create an isolated local registration |
+| `/api/public/induction/:siteToken/registrations/:id/evidence` | Upload validated PNG/JPEG evidence |
+| `/api/public/induction/:siteToken/registrations/:id/complete` | Validate evidence and submit |
+
 Administration screen:
 
 - Company-wide induction link
@@ -580,7 +593,12 @@ Public worker registration:
 - Confirmation that company Safety Statement and RAMS were read
 - Register & Continue
 
-The registration form was not filled or submitted, so the post-registration induction-page flow remains unverified.
+The source registration form was never submitted, so its post-registration
+induction-page behavior remains unverified. The recreation's separate local
+registration flow is implemented and tested: it enforces the site, validates
+the mapped worker/emergency/role/subcontractor/training/Safe Pass fields,
+requires evidence for each affirmative qualification, stores the submission
+outside the protected source snapshot, and notifies authorised company users.
 
 ### Contact
 
