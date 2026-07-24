@@ -56,6 +56,9 @@ WORKER_SESSION_HOURS = 24 * 7
 PASSWORD_ITERATIONS = 310_000
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCK_MINUTES = 15
+LOGIN_LOCKOUT_ENABLED = (
+    os.environ.get("KOMPLIANCE_LOGIN_LOCKOUT_ENABLED", "1").strip() == "1"
+)
 RESET_TOKEN_MINUTES = 30
 RECOVERY_MAX_ATTEMPTS = 3
 RECOVERY_WINDOW_MINUTES = 15
@@ -3062,7 +3065,12 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 "SELECT users.*, companies.name AS company_name FROM users JOIN companies ON companies.id = users.company_id WHERE users.email = ?",
                 (email,),
             ).fetchone()
-            locked = bool(row and row["locked_until"] and row["locked_until"] > now)
+            locked = bool(
+                LOGIN_LOCKOUT_ENABLED
+                and row
+                and row["locked_until"]
+                and row["locked_until"] > now
+            )
             password_valid = bool(
                 row
                 and row["active"]
@@ -3080,7 +3088,7 @@ class KomplianceHandler(BaseHTTPRequestHandler):
                 if not mfa_missing:
                     failures = int(row["failed_attempts"] or 0) + 1
                     locked_until = None
-                    if failures >= LOGIN_MAX_ATTEMPTS:
+                    if LOGIN_LOCKOUT_ENABLED and failures >= LOGIN_MAX_ATTEMPTS:
                         locked_until = (
                             datetime.now(UTC) + timedelta(minutes=LOGIN_LOCK_MINUTES)
                         ).replace(microsecond=0).isoformat()
@@ -3494,11 +3502,22 @@ class KomplianceHandler(BaseHTTPRequestHandler):
         now = utc_now()
         with DB_LOCK, connect_database() as connection:
             row = connection.execute("SELECT * FROM worker_accounts WHERE email = ?", (email,)).fetchone()
-            locked = bool(row and row["locked_until"] and row["locked_until"] > now)
+            locked = bool(
+                LOGIN_LOCKOUT_ENABLED
+                and row
+                and row["locked_until"]
+                and row["locked_until"] > now
+            )
             valid = bool(row and row["active"] and row["verified"] and not locked and password_matches(password, row["password_hash"]))
             if row and not valid and row["active"] and row["verified"] and not locked:
                 failures = int(row["failed_attempts"] or 0) + 1
-                locked_until = (datetime.now(UTC) + timedelta(minutes=LOGIN_LOCK_MINUTES)).replace(microsecond=0).isoformat() if failures >= LOGIN_MAX_ATTEMPTS else None
+                locked_until = (
+                    (datetime.now(UTC) + timedelta(minutes=LOGIN_LOCK_MINUTES))
+                    .replace(microsecond=0)
+                    .isoformat()
+                    if LOGIN_LOCKOUT_ENABLED and failures >= LOGIN_MAX_ATTEMPTS
+                    else None
+                )
                 connection.execute("UPDATE worker_accounts SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?", (failures, locked_until, now, row["id"]))
                 connection.commit()
             elif valid:

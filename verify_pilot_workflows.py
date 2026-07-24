@@ -185,6 +185,36 @@ def main() -> int:
                     base + "/api/auth/login", "POST", {"email": "security-pilot@example.test", "password": "wrong-password"}
                 )
                 lock_codes.append(code)
+            with server_module.DB_LOCK, server_module.connect_database() as connection:
+                connection.execute(
+                    "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE email = ?",
+                    ("security-pilot@example.test",),
+                )
+                connection.commit()
+            original_lockout_setting = server_module.LOGIN_LOCKOUT_ENABLED
+            server_module.LOGIN_LOCKOUT_ENABLED = False
+            try:
+                no_lock_codes = []
+                for _ in range(7):
+                    code, _, _ = request_json(
+                        base + "/api/auth/login",
+                        "POST",
+                        {
+                            "email": "security-pilot@example.test",
+                            "password": "wrong-password",
+                        },
+                    )
+                    no_lock_codes.append(code)
+                no_lock_login_code, _, _ = request_json(
+                    base + "/api/auth/login",
+                    "POST",
+                    {
+                        "email": "security-pilot@example.test",
+                        "password": "Reset-Security-2026!",
+                    },
+                )
+            finally:
+                server_module.LOGIN_LOCKOUT_ENABLED = original_lockout_setting
             recovery_code, recovery, _ = request_json(
                 base + "/api/auth/recovery/request", "POST", {"email": "unknown@example.test"}
             )
@@ -205,6 +235,9 @@ def main() -> int:
                 "account_role_update": user_code == 201 and update_code == 200 and updated_user.get("role") == "viewer",
                 "secure_reset_token": reset_link_code == 201 and reset_code == 200 and login_code == 200,
                 "login_attempt_lockout": lock_codes[:5] == [401] * 5 and lock_codes[-1] == 429,
+                "login_lockout_can_be_temporarily_disabled": (
+                    no_lock_codes == [401] * 7 and no_lock_login_code == 200
+                ),
                 "recovery_does_not_disclose_account": recovery_code == 202 and recovery.get("accepted") is True,
             }
             for name, passed in checks.items():
