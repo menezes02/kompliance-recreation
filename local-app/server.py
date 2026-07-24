@@ -1222,6 +1222,10 @@ def initialize_database() -> None:
                     """,
                     (production_data.get("exported_at", ""),),
                 )
+            # Production-backed installations return before the local seed path
+            # below. Generate any missing per-site public induction links here so
+            # fresh deployments and restored data volumes are immediately ready.
+            ensure_induction_site_links(connection, 1)
             connection.commit()
             return
 
