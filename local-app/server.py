@@ -1424,6 +1424,7 @@ def initialize_database() -> None:
                 """,
                 rows,
             )
+        ensure_induction_site_links(connection, 1)
         connection.commit()
 
 
