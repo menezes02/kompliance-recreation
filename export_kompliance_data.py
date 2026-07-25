@@ -318,8 +318,13 @@ def main() -> None:
         )
 
     module = load_archiver_module()
+    authorization = module.require_operation_authorization("export")
     session = module.KomplianceSession(email, password)
     session.login()
+    print(
+        "Authenticated for an approved read-only export "
+        f"({authorization['authorization_reference']})."
+    )
 
     forms_by_name, inductions_by_title, induction_catalog = load_examples()
     records: dict[str, list[dict[str, Any]]] = {}

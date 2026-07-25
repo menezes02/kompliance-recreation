@@ -2,6 +2,7 @@ name: kompliance
 
 services:
   app:
+    image: kompliance-app
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,6 +10,26 @@ services:
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
+      KOMPLIANCE_APP_AUTH: "1"
+      KOMPLIANCE_LOGIN_LOCKOUT_ENABLED: "${KOMPLIANCE_LOGIN_LOCKOUT_ENABLED:-1}"
+      KOMPLIANCE_SCHEDULER: "${KOMPLIANCE_SCHEDULER:-0}"
+      KOMPLIANCE_SCHEDULER_INTERVAL_SECONDS: "${KOMPLIANCE_SCHEDULER_INTERVAL_SECONDS:-3600}"
+      KOMPLIANCE_EMAIL_DELIVERY: "${KOMPLIANCE_EMAIL_DELIVERY:-0}"
+      KOMPLIANCE_EMAIL_PROVIDER: "${KOMPLIANCE_EMAIL_PROVIDER:-smtp}"
+      KOMPLIANCE_BASE_URL: "${KOMPLIANCE_BASE_URL:-}"
+      KOMPLIANCE_SMTP_HOST: "${KOMPLIANCE_SMTP_HOST:-}"
+      KOMPLIANCE_SMTP_PORT: "${KOMPLIANCE_SMTP_PORT:-587}"
+      KOMPLIANCE_SMTP_SECURITY: "${KOMPLIANCE_SMTP_SECURITY:-starttls}"
+      KOMPLIANCE_SMTP_USERNAME: "${KOMPLIANCE_SMTP_USERNAME:-}"
+      KOMPLIANCE_SMTP_PASSWORD: "${KOMPLIANCE_SMTP_PASSWORD:-}"
+      KOMPLIANCE_SMTP_FROM: "${KOMPLIANCE_SMTP_FROM:-}"
+      KOMPLIANCE_GMAIL_CLIENT_ID: "${KOMPLIANCE_GMAIL_CLIENT_ID:-}"
+      KOMPLIANCE_GMAIL_CLIENT_SECRET: "${KOMPLIANCE_GMAIL_CLIENT_SECRET:-}"
+      KOMPLIANCE_GMAIL_REFRESH_TOKEN: "${KOMPLIANCE_GMAIL_REFRESH_TOKEN:-}"
+      KOMPLIANCE_WORKER_EMAIL_VERIFICATION: "${KOMPLIANCE_WORKER_EMAIL_VERIFICATION:-1}"
+      KOMPLIANCE_COMPLIANCE_RECIPIENT: "${KOMPLIANCE_COMPLIANCE_RECIPIENT:-}"
+      KOMPLIANCE_PRIVACY_CONTACT: "${KOMPLIANCE_PRIVACY_CONTACT:-}"
+      KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE: "${KOMPLIANCE_API_RATE_LIMIT_PER_MINUTE:-120}"
     expose:
       - "8090"
     volumes:
@@ -21,6 +42,35 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
+  operations:
+    image: kompliance-app
+    container_name: kompliance_operations_example
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    command: ["python", "/app/ops_kompliance.py"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KOMPLIANCE_AUTOMATED_BACKUPS: "${KOMPLIANCE_AUTOMATED_BACKUPS:-1}"
+      KOMPLIANCE_BACKUP_INTERVAL_SECONDS: "${KOMPLIANCE_BACKUP_INTERVAL_SECONDS:-86400}"
+      KOMPLIANCE_MONITOR_INTERVAL_SECONDS: "${KOMPLIANCE_MONITOR_INTERVAL_SECONDS:-60}"
+      KOMPLIANCE_READY_URL: "http://app:8090/api/health/ready"
+    volumes:
+      - kompliance_data_example:/app/local-app/data
+    networks:
+      - proxy
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,pathlib; d=json.loads(pathlib.Path('/app/local-app/data/operations/status.json').read_text()); assert d.get('ready') and not d.get('last_backup_error')"]
+      interval: 60s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   gateway:
     image: nginx:stable-alpine

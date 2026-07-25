@@ -15,6 +15,40 @@ Access level observed: customer/company administrator
 - Create and edit pages were opened only to identify their schemas.
 - Public induction registration was viewed only up to the registration form.
 
+## Local platform extensions
+
+### Localisation
+
+- Text-only language selectors are available in the company header and worker portal.
+- Supported locales: `en-IE`, `pl-PL`, `ro-RO`, `pt-BR`, `uk-UA`, `ru-RU`, `es-ES`.
+- Company and worker preferences persist the canonical locale code; legacy `en`, `pt`
+  and `es` values are upgraded automatically.
+- The static catalogue is generated from interface source strings and contains no
+  customer records. Customer-entered names, documents and record values remain
+  unchanged.
+- English is the authoritative source. Native-speaker review remains a commercial
+  release gate for safety-critical and legal wording.
+
+These routes belong to the recreated platform and were not used to mutate the
+source application:
+
+| Route | Purpose |
+|---|---|
+| `/worker/` | Worker registration, login, recovery and worker-owned passport |
+| `/worker/public/:token` | Minimal worker-controlled QR profile |
+| `/worker/share/:token` | Revocable company-specific consent link |
+| `/shared-workers` | QR/manual company access requests, consent history, document review and workforce import |
+| `/workflow-centre` | Routed requests, conversations, induction approvals, notifications and department contacts |
+| `/worker/#inbox` | Worker access approval/decline, request creation, conversation replies, induction status and notifications |
+| `/system` | System/privacy controls, notification delivery history and authorised tenant migration history |
+| `/review` | Administrator pilot readiness, controlled email diagnostics, acceptance checklist and secret-free evidence export |
+| `/api/v1/shared-workers` | Bearer-token REST list for active consent grants |
+| `/api/v1/workers/:id/*` | Scoped profile, certification, training, induction and document resources |
+| `/api/openapi.json` | OpenAPI 3.1 contract for consent and integration routes |
+
+All local tenant records are isolated by `company_id`. The authorised source
+snapshot belongs only to the original customer tenant and remains immutable.
+
 ## Application shell
 
 The authenticated application uses a single top navigation bar with:
@@ -489,6 +523,19 @@ The list, create, view, expiry tracking, and document behavior match GA1.
 | `/induction/c/:companyToken` | Public worker entry/resume screen |
 | `/induction/c/:companyToken/register` | Public worker registration |
 
+The recreation also provides one locally generated, tenant-scoped QR token per
+site. These tokens are not copied from the source application:
+
+| Local route | Purpose |
+|---|---|
+| `/api/company/induction-sites` | Authenticated list of site QR links |
+| `/api/company/induction-sites/:id/qr` | Authenticated SVG QR image |
+| `/api/company/induction-registrations` | Authenticated QR-registration inbox |
+| `/api/public/induction/:siteToken` | Public, site-scoped registration schema |
+| `/api/public/induction/:siteToken/registrations` | Create an isolated local registration |
+| `/api/public/induction/:siteToken/registrations/:id/evidence` | Upload validated PNG/JPEG evidence |
+| `/api/public/induction/:siteToken/registrations/:id/complete` | Validate evidence and submit |
+
 Administration screen:
 
 - Company-wide induction link
@@ -546,7 +593,12 @@ Public worker registration:
 - Confirmation that company Safety Statement and RAMS were read
 - Register & Continue
 
-The registration form was not filled or submitted, so the post-registration induction-page flow remains unverified.
+The source registration form was never submitted, so its post-registration
+induction-page behavior remains unverified. The recreation's separate local
+registration flow is implemented and tested: it enforces the site, validates
+the mapped worker/emergency/role/subcontractor/training/Safe Pass fields,
+requires evidence for each affirmative qualification, stores the submission
+outside the protected source snapshot, and notifies authorised company users.
 
 ### Contact
 
@@ -692,4 +744,3 @@ These require additional authorized roles, safe test data, or explicit permissio
 7. Implement induction builder, company token/QR entry, registration, page completion, submissions, and certificates.
 8. Add audit logging, role permissions, validation, uploads, email delivery, and background jobs.
 9. Verify responsive behavior and parity against every mapped screen.
-

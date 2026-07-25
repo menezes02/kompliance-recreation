@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-IE">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#07365c" />
     <title>Kompliance Local</title>
     <link rel="icon" href="/static/favicon.svg" />
-    <link rel="stylesheet" href="/static/styles.css?v=7" />
+    <link rel="stylesheet" href="/static/styles.css?v=34" />
   </head>
   <body>
     <div id="loading" class="loading-screen" aria-live="polite">
@@ -36,6 +36,8 @@
             <button class="nav-trigger"><span class="nav-icon">♙</span><span>Workforce</span><span class="nav-chevron">⌄</span></button>
             <div class="nav-menu">
               <a href="/workers" data-route>Workers</a>
+              <a href="/shared-workers" data-route>Shared worker passports</a>
+              <a href="/workflow-centre" data-route>Workflow & inbox</a>
               <a href="/sites" data-route>Sites</a>
               <a href="/workers-roles" data-route>Roles</a>
               <a href="/subcontractor" data-route>Subcontractors</a>
@@ -70,7 +72,11 @@
           </div>
 
           <a href="/document" data-route><span class="nav-icon">▱</span><span>Documents</span></a>
-          <a href="/archive" data-route><span class="nav-icon">◴</span><span>Source archive</span></a>
+          <a href="/archive" data-route id="source-archive-link"><span class="nav-icon">◴</span><span>Source archive</span></a>
+          <a href="/local-workflows" data-route><span class="nav-icon">＋</span><span>Local workflows</span></a>
+          <a href="/compliance" data-route><span class="nav-icon">!</span><span>Expiry centre</span></a>
+          <a href="/review" data-route id="review-link"><span class="nav-icon">✓</span><span>Review &amp; acceptance</span></a>
+          <a href="/translations" data-route id="translations-link"><span class="nav-icon">文</span><span>Translation review</span></a>
         </nav>
 
         <div class="sidebar-footer">
@@ -92,6 +98,18 @@
           </div>
 
           <div class="header-actions">
+            <label class="app-language" for="app-language">
+              <span>Language</span>
+              <select id="app-language" aria-label="Language">
+                <option value="en-IE">English</option>
+                <option value="pl-PL">Polski</option>
+                <option value="ro-RO">Română</option>
+                <option value="pt-BR">Português (Brasil)</option>
+                <option value="uk-UA">Українська</option>
+                <option value="ru-RU">Русский</option>
+                <option value="es-ES">Español</option>
+              </select>
+            </label>
             <a class="header-help" href="/contact-us" data-route>Help</a>
             <div class="account-menu">
               <button class="account-trigger" id="account-trigger">
@@ -102,19 +120,27 @@
               <div class="account-dropdown" id="account-dropdown">
                 <a href="/company-profile" data-route>Company profile</a>
                 <a href="/change-password" data-route>Security settings</a>
+                <a href="/audit" data-route id="audit-link">Audit log</a>
+                <a href="/users" data-route id="users-link">Access management</a>
+                <a href="/system" data-route id="system-link">System &amp; privacy</a>
+                <a href="/review" data-route id="review-menu-link">Review &amp; acceptance</a>
+                <a href="/translations" data-route id="translations-menu-link">Translation review</a>
                 <a href="/contact-us" data-route>Contact support</a>
+                <a href="#" id="logout-action">Sign out</a>
               </div>
             </div>
           </div>
         </header>
 
         <main id="app" class="app-shell" tabindex="-1"></main>
-        <footer class="footer"><span id="year"></span> © Kompliance workspace · Secure customer-data clone</footer>
+        <footer class="footer"><span id="year"></span> © Kompliance workspace · Secure customer-data clone · <a href="/privacy">Privacy</a></footer>
       </div>
     </div>
 
     <div id="modal-root"></div>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
-    <script src="/static/app.js?v=7" defer></script>
+    <script src="/static/i18n-catalog.js?v=3" defer></script>
+    <script src="/static/i18n.js?v=6" defer></script>
+    <script src="/static/app.js?v=37" defer></script>
   </body>
 </html>

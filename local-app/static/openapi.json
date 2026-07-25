@@ -1,0 +1,115 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kompliance Universal Worker API",
+    "version": "1.0.0",
+    "description": "Tenant-scoped worker passport access. Bearer API reads expose only fields covered by active worker consent. Browser-session endpoints implement the QR request and worker decision handshake."
+  },
+  "servers": [{"url": "/", "description": "Current Kompliance installation"}],
+  "tags": [
+    {"name": "Integration", "description": "Read-only bearer-token integration"},
+    {"name": "Company consent", "description": "Company-session QR access requests"},
+    {"name": "Worker consent", "description": "Worker-session access decisions"}
+  ],
+  "paths": {
+    "/api/v1/shared-workers": {
+      "get": {
+        "tags": ["Integration"],
+        "summary": "List workers with active consent for the token tenant",
+        "security": [{"bearerAuth": []}],
+        "parameters": [{"$ref": "#/components/parameters/Page"}, {"$ref": "#/components/parameters/PageSize"}],
+        "responses": {
+          "200": {"description": "Paginated consent-filtered workers", "content": {"application/json": {"schema": {"type": "object", "required": ["data", "pagination"], "properties": {"data": {"type": "array", "items": {"$ref": "#/components/schemas/SharedWorker"}}, "pagination": {"$ref": "#/components/schemas/Pagination"}}}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "429": {"$ref": "#/components/responses/RateLimited"}
+        }
+      }
+    },
+    "/api/v1/workers/{workerId}": {
+      "get": {
+        "tags": ["Integration"], "summary": "Get one consent-filtered worker",
+        "security": [{"bearerAuth": []}],
+        "parameters": [{"$ref": "#/components/parameters/WorkerId"}],
+        "responses": {"200": {"description": "Shared worker", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SharedWorker"}}}}, "401": {"$ref": "#/components/responses/Unauthorized"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/api/v1/workers/{workerId}/certifications": {
+      "get": {"tags": ["Integration"], "summary": "List shared certifications", "security": [{"bearerAuth": []}], "parameters": [{"$ref": "#/components/parameters/WorkerId"}], "responses": {"200": {"$ref": "#/components/responses/StringList"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"$ref": "#/components/responses/NotFound"}}}
+    },
+    "/api/v1/workers/{workerId}/training-records": {
+      "get": {"tags": ["Integration"], "summary": "List shared training records", "security": [{"bearerAuth": []}], "parameters": [{"$ref": "#/components/parameters/WorkerId"}], "responses": {"200": {"$ref": "#/components/responses/StringList"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"$ref": "#/components/responses/NotFound"}}}
+    },
+    "/api/v1/workers/{workerId}/inductions": {
+      "get": {"tags": ["Integration"], "summary": "List shared inductions", "security": [{"bearerAuth": []}], "parameters": [{"$ref": "#/components/parameters/WorkerId"}], "responses": {"200": {"$ref": "#/components/responses/StringList"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"$ref": "#/components/responses/NotFound"}}}
+    },
+    "/api/v1/workers/{workerId}/documents": {
+      "get": {
+        "tags": ["Integration"], "summary": "List shared document metadata", "security": [{"bearerAuth": []}], "parameters": [{"$ref": "#/components/parameters/WorkerId"}],
+        "responses": {"200": {"description": "Shared documents", "content": {"application/json": {"schema": {"type": "object", "required": ["data"], "properties": {"data": {"type": "array", "items": {"$ref": "#/components/schemas/WorkerDocument"}}}}}}}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/api/v1/workers/{workerId}/documents/{documentId}/file": {
+      "get": {
+        "tags": ["Integration"], "summary": "Download a shared worker document", "security": [{"bearerAuth": []}],
+        "parameters": [{"$ref": "#/components/parameters/WorkerId"}, {"name": "documentId", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}}],
+        "responses": {"200": {"description": "Original document bytes", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/api/company/worker-access-requests": {
+      "get": {
+        "tags": ["Company consent"], "summary": "List access requests for the signed-in company", "security": [{"companySession": []}],
+        "responses": {"200": {"description": "Tenant-scoped requests", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessRequestCollection"}}}}, "401": {"$ref": "#/components/responses/Unauthorized"}}
+      },
+      "post": {
+        "tags": ["Company consent"], "summary": "Request worker-controlled access from a QR link", "security": [{"companySession": [], "csrfHeader": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["qr_value", "requested_fields"], "properties": {"qr_value": {"type": "string", "description": "Worker public QR URL or its public token"}, "requested_fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/components/schemas/ShareField"}}, "message": {"type": "string", "maxLength": 1000}}}}}},
+        "responses": {"201": {"description": "Pending request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessRequest"}}}}, "400": {"$ref": "#/components/responses/BadRequest"}, "409": {"$ref": "#/components/responses/Conflict"}}
+      }
+    },
+    "/api/worker/access-requests": {
+      "get": {
+        "tags": ["Worker consent"], "summary": "List the signed-in worker's company access requests", "security": [{"workerSession": []}],
+        "responses": {"200": {"description": "Worker-owned requests", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessRequestCollection"}}}}, "401": {"$ref": "#/components/responses/Unauthorized"}}
+      }
+    },
+    "/api/worker/access-requests/{requestId}/respond": {
+      "post": {
+        "tags": ["Worker consent"], "summary": "Approve selected requested fields or decline without sharing", "security": [{"workerSession": [], "csrfHeader": []}],
+        "parameters": [{"name": "requestId", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["decision"], "properties": {"decision": {"type": "string", "enum": ["approved", "declined"]}, "visible_fields": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/components/schemas/ShareField"}}}}}}},
+        "responses": {"200": {"description": "Decision recorded; approved responses include a share URL", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessRequest"}}}}, "400": {"$ref": "#/components/responses/BadRequest"}, "409": {"$ref": "#/components/responses/Conflict"}}
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "kmp token"},
+      "companySession": {"type": "apiKey", "in": "cookie", "name": "kompliance_session"},
+      "workerSession": {"type": "apiKey", "in": "cookie", "name": "kompliance_worker_session"},
+      "csrfHeader": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}
+    },
+    "parameters": {
+      "WorkerId": {"name": "workerId", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}},
+      "Page": {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "default": 1}},
+      "PageSize": {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
+    },
+    "schemas": {
+      "ShareField": {"type": "string", "enum": ["name", "email", "phone", "trade", "skills", "qualifications", "certifications", "training_records", "inductions", "employment_history", "documents"]},
+      "WorkerDocument": {"type": "object", "required": ["id", "category", "title", "version"], "properties": {"id": {"type": "integer"}, "category": {"type": "string"}, "title": {"type": "string"}, "original_name": {"type": "string"}, "mime_type": {"type": "string"}, "size": {"type": "integer"}, "version": {"type": "integer"}, "expiry_date": {"type": ["string", "null"], "format": "date"}, "expiry_source": {"type": ["string", "null"], "enum": ["manual", "document_text", "file_name_or_title", "not_detected", null]}, "expiry_confidence": {"type": ["string", "null"], "enum": ["confirmed", "high", "medium", "none", null]}, "review_status": {"type": "string"}}},
+      "SharedWorker": {"type": "object", "required": ["access_id", "worker_id", "company_id", "status", "visible_fields", "profile"], "properties": {"access_id": {"type": "integer"}, "worker_id": {"type": "integer"}, "company_id": {"type": "integer"}, "status": {"const": "active"}, "granted_at": {"type": "string", "format": "date-time"}, "visible_fields": {"type": "array", "items": {"$ref": "#/components/schemas/ShareField"}}, "profile": {"type": "object", "additionalProperties": true, "description": "Contains only fields named in visible_fields."}}},
+      "Pagination": {"type": "object", "required": ["page", "page_size", "total", "pages"], "properties": {"page": {"type": "integer"}, "page_size": {"type": "integer"}, "total": {"type": "integer"}, "pages": {"type": "integer"}}},
+      "AccessRequest": {"type": "object", "required": ["id", "status"], "properties": {"id": {"type": "integer"}, "company_id": {"type": "integer"}, "worker_id": {"type": "integer"}, "company_name": {"type": "string"}, "requested_fields": {"type": "array", "items": {"$ref": "#/components/schemas/ShareField"}}, "response_fields": {"type": "array", "items": {"$ref": "#/components/schemas/ShareField"}}, "visible_fields": {"type": "array", "items": {"$ref": "#/components/schemas/ShareField"}}, "message": {"type": ["string", "null"]}, "status": {"type": "string", "enum": ["pending", "approved", "declined"]}, "created_at": {"type": "string", "format": "date-time"}, "responded_at": {"type": ["string", "null"], "format": "date-time"}, "share_url": {"type": "string", "format": "uri"}}},
+      "AccessRequestCollection": {"type": "object", "required": ["data", "available_fields"], "properties": {"data": {"type": "array", "items": {"$ref": "#/components/schemas/AccessRequest"}}, "available_fields": {"type": "array", "items": {"$ref": "#/components/schemas/ShareField"}}}},
+      "Error": {"type": "object", "required": ["error"], "properties": {"error": {"type": "string"}}}
+    },
+    "responses": {
+      "StringList": {"description": "Shared values", "content": {"application/json": {"schema": {"type": "object", "required": ["data"], "properties": {"data": {"type": "array", "items": {"type": "string"}}}}}}},
+      "BadRequest": {"description": "Invalid input", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "Unauthorized": {"description": "Authentication required or token invalid", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "RateLimited": {"description": "Per-token request limit exceeded", "headers": {"Retry-After": {"schema": {"type": "integer"}}, "X-RateLimit-Limit": {"schema": {"type": "integer"}}, "X-RateLimit-Remaining": {"schema": {"type": "integer"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "Forbidden": {"description": "The field is not covered by active consent", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "NotFound": {"description": "Resource is outside the caller's tenant consent boundary", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "Conflict": {"description": "Request already answered, pending, or access already active", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+    }
+  }
+}

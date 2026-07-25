@@ -1,6 +1,30 @@
 # Kompliance Recreation
 
+Gmail delivery can use OAuth 2.0 through the Gmail API without storing the Gmail
+account password. See [GMAIL_OAUTH_SETUP.md](GMAIL_OAUTH_SETUP.md). Delivery and
+the scheduler remain fail-closed until explicitly enabled.
+
 Private, containerized recreation of the Kompliance health and safety application.
+
+The current release candidate adds a tenant-isolated Universal Worker Foundation, company QR access requests with worker-controlled field approval, supervisor workflow/inbox, routed requests, worker conversations, induction approval history, real-definition form completion, verifiable certificates, expiry/reminder operations, account recovery and lockout, system/privacy controls, and verified local-data backups while preserving the imported customer snapshot as immutable.
+
+See [SUPERVISOR_WORKFLOW.md](SUPERVISOR_WORKFLOW.md) for workflow states, routes and the external notification-provider boundary.
+
+The company and worker applications include persistent, text-only localisation for
+English (`en-IE`), Polish, Romanian, Brazilian Portuguese, Ukrainian, Russian and
+Spanish. The static catalogue covers shared navigation, authentication, validation,
+primary workflows and administrative screens; customer-entered record values are
+preserved. English remains the authoritative source language and safety-critical
+translations require native-speaker review before commercial sign-off. Run
+`python verify_localisation.py` to verify catalogue coverage, preference persistence
+and the protected-record boundary. Operational delivery is also localised: worker
+onboarding records a preferred language, system emails and in-app workflow notices
+use it, and generated submission/certificate PDFs embed Unicode fonts. Administrators
+use `/translations` to review tenant-scoped wording, approve runtime overrides,
+exchange reviewed CSV files, inspect fallbacks and follow the controlled Irish
+construction glossary. Run `python verify_operational_localisation.py` for this path.
+See [TENANT_MIGRATION.md](TENANT_MIGRATION.md)
+for the checksum-verified, dry-run-first customer migration process.
 
 The repository contains:
 
@@ -17,15 +41,38 @@ private. Production access credentials, SSH credentials, generated HTTP Basic Au
 files, logs, and runtime databases are intentionally excluded from Git.
 
 The original production application is treated as read-only. See
-`READ_ONLY_POLICY.md`.
+`READ_ONLY_POLICY.md`. Approval responsibilities for exports, downloads, demo
+publication, migration, and deployment are defined in `DATA_GOVERNANCE.md`.
+
+Imported snapshot records are immutable in both the local API and interface.
+Startup imports the authorised customer snapshot once into a fresh data volume. A changed export is never used to replace or delete protected rows in an existing volume.
+Production-reading scripts require the acknowledgement and approval-reference
+environment values documented in `.env.example`.
 
 ## Run locally
 
 ```powershell
+python -m pip install -r requirements.txt
 python local-app/server.py
 ```
 
 Then open `http://127.0.0.1:8090/`.
+
+Worker self-registration is available at `http://127.0.0.1:8090/worker/`. The company application exposes QR requests and consented profiles at `/shared-workers`. See `QR_ACCESS_REQUESTS.md` for the approval lifecycle and `UNIVERSAL_WORKER_API.md` for REST integration. The OpenAPI 3.1 contract is served at `/api/openapi.json`.
+
+Administrators can open `/review` for the Review & Acceptance Centre. It combines
+database, protected-record, role, MFA, email, privacy, scheduler, backup and customer
+acceptance evidence without changing the imported snapshot. The controlled test-email
+action requires explicit confirmation, stores only safe diagnostic history and never
+returns Gmail OAuth credentials.
+
+Administrators can open `/translations` for the Translation Review Centre. Machine
+translations remain clearly marked until a reviewer records a status; only approved
+rows override runtime wording. Template placeholders are protected during import and
+editing so reviewed email text cannot break delivery.
+
+Operational validation, backup, monitoring, email and release instructions are in `OPERATIONS_RUNBOOK.md`.
+The controlled customer test path is documented in `PILOT_TEST_HANDOFF.md`, with formal sign-off in `PILOT_ACCEPTANCE_CHECKLIST.md`.
 
 ## Docker deployment
 
@@ -34,6 +81,7 @@ project uses these fixed resource names:
 
 - `kompliance_app_example`
 - `kompliance_gateway_example`
+- `kompliance_operations_example`
 - `kompliance_data_example`
 
 ```powershell
@@ -47,4 +95,3 @@ The stack expects an existing external Docker network named `proxy`.
 The production snapshot is stored in `production-data/records.json`. The
 application imports that snapshot into its runtime SQLite database on startup and
 does not fall back to demo data when the snapshot is present.
-

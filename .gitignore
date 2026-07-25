@@ -3,9 +3,14 @@
 .env.*
 !.env.example
 deployment/htpasswd
+client_secret*.json
+gmail-oauth*.json
+oauth-client*.json
 
 # Runtime state
 local-app/data/
+workstation-backups/
+.test-data-*/
 *.db
 *.db-shm
 *.db-wal
@@ -25,4 +30,3 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
-

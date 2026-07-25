@@ -1,0 +1,129 @@
+{
+  "captured_at": "2026-07-24",
+  "source_path": "/induction/c/{company-token}/register",
+  "capture_policy": {
+    "read_only": true,
+    "submitted_to_source": false,
+    "csrf_or_session_data_retained": false,
+    "personal_form_data_retained": false,
+    "note": "Field names, option identifiers, validation cues and conditional behaviour were mapped from the authorised worker-registration page without submitting the source form."
+  },
+  "company": "Kingscroft Development Ltd",
+  "sections": [
+    "Worker Details",
+    "Medical Details",
+    "Training Records",
+    "Safe Pass Details",
+    "Confirmation"
+  ],
+  "fields": [
+    {"name": "name", "type": "text", "label": "Worker Name", "required": true},
+    {"name": "email", "type": "email", "label": "Worker Email", "required": true},
+    {"name": "worker_id", "type": "text", "label": "Worker ID", "required": false},
+    {"name": "country_code", "type": "select", "label": "Country code", "required": true, "default": "+353"},
+    {"name": "phone_number", "type": "tel", "label": "Contact Number", "required": true},
+    {"name": "emergency_country_code", "type": "select", "label": "Emergency country code", "required": true, "default": "+353"},
+    {"name": "emergency_phone_number", "type": "tel", "label": "Emergency Contact Number", "required": true},
+    {"name": "emergency_contact_name", "type": "text", "label": "Name of Person to Contact", "required": true},
+    {"name": "emergency_contact_address", "type": "text", "label": "Emergency Contact Address", "required": true},
+    {"name": "sites", "source_name": "sites[]", "type": "multi_select", "label": "Sites", "required": true},
+    {"name": "roles", "source_name": "roles[]", "type": "multi_select", "label": "Roles", "required": true},
+    {"name": "subcontractors", "source_name": "subcontractors[]", "type": "multi_select", "label": "Subcontractors", "required": true, "depends_on": "sites"},
+    {"name": "photo", "type": "file", "label": "Photo", "required": false, "accept": ["image/png", "image/jpeg"], "max_bytes": 10485760},
+    {"name": "medical_details", "type": "textarea", "label": "Details of Relevant Medical History", "required": false, "placeholder": "e.g. diabetes, epilepsy, allergies, heart condition etc."},
+    {"name": "safety_confirmation", "type": "checkbox", "label": "I confirm I have read my company's Safety Statement and RAMS.", "required": true}
+  ],
+  "sites": [
+    {"id": "167", "name": "Oranmore"},
+    {"id": "171", "name": "Baileyhill / Moathill"},
+    {"id": "172", "name": "Kilcarn"},
+    {"id": "173", "name": "Ratoath"},
+    {"id": "174", "name": "Citywest"},
+    {"id": "175", "name": "Foxrock"},
+    {"id": "176", "name": "Portarlington"}
+  ],
+  "roles": [
+    {"id": "103", "name": "Site Supervisor"},
+    {"id": "106", "name": "Admin"},
+    {"id": "107", "name": "Scaffolder"},
+    {"id": "108", "name": "Teleporter driver"},
+    {"id": "109", "name": "General Operative"},
+    {"id": "113", "name": "Crane operator"},
+    {"id": "114", "name": "Finishing Foreman"},
+    {"id": "115", "name": "Labourer"},
+    {"id": "116", "name": "dumper driver"},
+    {"id": "122", "name": "Bricklayer"},
+    {"id": "135", "name": "Excavator Driver"},
+    {"id": "136", "name": "Electrician"},
+    {"id": "137", "name": "Carpenter"},
+    {"id": "142", "name": "Painter"},
+    {"id": "143", "name": "Plumber"},
+    {"id": "151", "name": "Digger Operator"},
+    {"id": "153", "name": "Groundworker"},
+    {"id": "183", "name": "Paver / Landscaper"},
+    {"id": "196", "name": "Manager"},
+    {"id": "203", "name": "Plaster border / Skimmer"},
+    {"id": "219", "name": "Safety Advisor"},
+    {"id": "220", "name": "Steel Fixer"}
+  ],
+  "calling_codes": ["+93","+355","+213","+1684","+376","+244","+1264","+672","+1268","+54","+374","+297","+61","+43","+994","+1242","+973","+880","+1246","+375","+32","+501","+229","+1441","+975","+591","+387","+267","+47","+55","+246","+673","+359","+226","+257","+855","+237","+1","+238","+1345","+236","+235","+56","+86","+61","+61","+57","+269","+242","+242","+682","+506","+225","+385","+53","+357","+420","+45","+253","+1767","+1809","+670","+593","+20","+503","+240","+291","+372","+251","+500","+298","+679","+358","+33","+594","+689","+1","+241","+220","+995","+49","+233","+350","+30","+299","+1473","+590","+1671","+502","+44","+224","+245","+592","+509","+672","+504","+852","+36","+354","+91","+62","+98","+964","+353","+972","+39","+1876","+81","+44","+962","+7","+254","+686","+850","+82","+965","+996","+856","+371","+961","+266","+231","+218","+423","+370","+352","+853","+389","+261","+265","+60","+960","+223","+356","+44","+692","+596","+222","+230","+269","+52","+691","+373","+377","+976","+1664","+212","+258","+95","+264","+674","+977","+599","+31","+687","+64","+505","+227","+234","+683","+672","+1670","+47","+968","+92","+680","+970","+507","+675","+595","+51","+63","+64","+48","+351","+1787","+974","+262","+40","+70","+250","+290","+1869","+1758","+508","+1784","+684","+378","+239","+966","+221","+381","+248","+232","+65","+421","+386","+44","+677","+252","+27","+500","+211","+34","+94","+249","+597","+47","+268","+46","+41","+963","+886","+992","+255","+66","+228","+690","+676","+1868","+216","+90","+993","+1649","+688","+256","+380","+971","+44","+1","+246","+598","+998","+678","+379","+58","+84","+1284","+1340","+681","+212","+967","+38","+260","+263"],
+  "training_questions": [
+    {"id": "2284", "question": "Manual Handling?"},
+    {"id": "2285", "question": "Abrasive Wheel CSCS training ?"},
+    {"id": "2286", "question": "First Aid FETAC training ?"},
+    {"id": "2287", "question": "Location of Underground Services CSCS training?"},
+    {"id": "2288", "question": "Mini Digger CSCS training?"},
+    {"id": "2289", "question": "180◦ Excavator CSCS training?"},
+    {"id": "2290", "question": "360◦ Excavator CSCS training?"},
+    {"id": "2291", "question": "Site Dumper & Articulated Dumper CSCS training?"},
+    {"id": "2292", "question": "Loading Shovel QSCS training?"},
+    {"id": "2293", "question": "Mobile Elevated Working Platform MEWPs CSCS training?"},
+    {"id": "2294", "question": "Scaffolding - Basic training?"},
+    {"id": "2295", "question": "Scaffolding - Advanced training?"},
+    {"id": "2296", "question": "Mobile tower scaffold training?"},
+    {"id": "2297", "question": "Tower crane operation training?"},
+    {"id": "2298", "question": "Self erecting tower crane operation training?"},
+    {"id": "2299", "question": "Slinging/Signalling training?"},
+    {"id": "2300", "question": "Telescopic handler operation training?"},
+    {"id": "2301", "question": "Tractor/dozer operation training?"},
+    {"id": "2302", "question": "Mobile crane operation training?"},
+    {"id": "2303", "question": "Crawler crane operation training?"},
+    {"id": "2304", "question": "Articulated dumper operation training"},
+    {"id": "2305", "question": "Roof and wall cladding/sheeting training?"},
+    {"id": "2306", "question": "Built-up roof felting training?"},
+    {"id": "2307", "question": "Signing, lighting and guarding on roads training?"},
+    {"id": "2308", "question": "Shotfiring training?"},
+    {"id": "2309", "question": "Forklift training?"},
+    {"id": "2310", "question": "MEWP training?"},
+    {"id": "4081", "question": "Induction?"}
+  ],
+  "training_record": {
+    "answer_values": {"yes": "1", "no": "0"},
+    "conditional_when_yes": [
+      {"name": "expiry_date", "type": "date", "required": true},
+      {"name": "photo", "type": "file", "required": true, "multiple": true, "accept": ["image/png", "image/jpeg"], "max_bytes_each": 10485760}
+    ]
+  },
+  "safe_pass": {
+    "answer_values": {"yes": "1", "no": "0"},
+    "conditional_when_yes": [
+      {"name": "name", "type": "text", "label": "Name", "required": true},
+      {"name": "title", "type": "text", "label": "Registration number", "required": true},
+      {"name": "valid_from", "type": "date", "label": "Valid From", "required": true},
+      {"name": "expiry_date", "type": "date", "label": "Expiry Date", "required": true},
+      {"name": "photo", "type": "file", "label": "Photo", "required": true, "multiple": true, "accept": ["image/png", "image/jpeg"], "max_bytes_each": 10485760}
+    ]
+  },
+  "subcontractors_by_site": {
+    "167": [
+      ["none","No Subcontractor"],["379","Allen Cranes"],["380","Ancove Groundworks"],["381","Be-Space Kitchens"],["382","Bridgewood Carpentry"],["383","Brady Slipform"],["384","BSS Agency Staff"],["385","Captain Clean"],["386","Circet Ireland"],["387","Concept Colours"],["388","Coral Plant"],["389","D&C Paving"],["390","E&M Tiling"],["391","Greenlight Electrical"],["392","H&M Ironworks"],["393","Havern Bricklaying"],["394","Holton Gutters"],["395","JOL Electrical"],["396","JPP Insulation"],["397","Kerr Electrical"],["398","Langan Mastics"],["399","LG Safety"],["400","Mason Landscapes"],["401","MBM Core Drilling"],["402","McBreen Environmental"],["403","McElwain Scaffolding"],["404","McIlhenny Plastering"],["405","O’Connors Heating & Plumbing"],["406","O’Neill & Brennan"],["407","Pat Brannigan Carpentry"],["408","RPS Power Washing"],["409","Suir Electrical"],["410","Tom Brady Roofing"],["875","Concept Colours"],["876","Corrib Plant Hire and Construction"],["877","Fahy Insulation Ltd"],["895","H&R Heating & Plumbing Ltd"],["896","Loftus Guttering Services"],["897","Thomas Quirke Plastering Ltd"],["944","Bespace"],["945","Concept Colours"],["946","Declan Cummins"],["947","Hamill Carpentry"],["948","LG Safety"],["949","SDES Electrical"],["950","Sean Glennon Groundworks"],["951","Usher Insulations"],["953","Ancove"],["954","B-Space – Kitchen & Wardrobe"],["955","Carroll Joinery"],["956","Concept Colour"],["957","Greenlight Plumbing"],["958","JPP Insulation"],["959","Jason Royal (Electrical)"],["960","LG Safety"],["961","Monster Joinery"],["962","O'Connor Plumbing"],["963","Ronan (Block Laying)"],["964","SC Carpentry"],["965","Slabbing & Skimming – Paul McElhinney"],["966","Acc Complete Interior Solutions"],["967","Carroll Joinery"],["968","Circet"],["969","Concept Colours"],["970","Hal Electrical"],["971","Hamill Construction/Roofing"],["972","Kerrigan’s"],["973","Kevin Heeney Tiler"],["974","Lase Decorators"],["975","LG Safety"],["976","Maple Grange Construction"],["977","Meehan Block"],["978","MORB"],["979","Munster Joinery"],["980","Niaron"],["981","Redlough Landscaping"],["982","Ross Construction"],["983","Sean Glennon (Glennon)"],["984","Usher Insulation"],["985","AAA Plasterboard"],["986","Ancove Groundworks"],["987","Bespace Kitchens"],["988","Concept Colours Painting"],["989","Cormeen Blocklaying"],["990","Geraghty Roofing"],["991","Greenlight Mech/Elec"],["992","Hamil Carpentry"],["993","Imperial Tiling"],["994","Kerrigan Mechanical"],["995","LG Safety"],["996","McElhinney Plaster"],["997","Munster Joinery"],["998","Top Grade Roofing"],["999","Usher Insulation"],["1000","Branagan Carpentry"],["1001","Eddie Duffy"],["1002","H&M Ironworks"],["1003","Heatec"],["1004","HP Roofing"],["1005","JOL Electrical"],["1006","LG Safety"],["1007","McElwain"],["1008","Nordan"],["1010","Enuzum"],["1015","Holemasters"],["1028","HP Roofing"],["1040","NorDan"],["1041","Redlough"],["1086","BSS Agency Staff"],["1087","O’Neill & Brennan"],["1088","BSS Agency Staff"],["1089","O’Neill & Brennan"],["1090","BSS Agency Staff"],["1091","O’Neill & Brennan"],["1092","BSS Agency Staff"],["1093","O’Neill & Brennan"],["1094","BSS Agency Staff"],["1095","O’Neill & Brennan"],["1096","BSS Agency Staff"],["1097","O’Neill & Brennan"],["1102","Coolcat"]
+    ],
+    "171": [["none","No Subcontractor"],["875","Concept Colours"],["876","Corrib Plant Hire and Construction"],["877","Fahy Insulation Ltd"],["895","H&R Heating & Plumbing Ltd"],["896","Loftus Guttering Services"],["897","Thomas Quirke Plastering Ltd"],["1086","BSS Agency Staff"],["1087","O’Neill & Brennan"]],
+    "172": [["none","No Subcontractor"],["985","AAA Plasterboard"],["986","Ancove Groundworks"],["987","Bespace Kitchens"],["988","Concept Colours Painting"],["989","Cormeen Blocklaying"],["990","Geraghty Roofing"],["991","Greenlight Mech/Elec"],["992","Hamil Carpentry"],["993","Imperial Tiling"],["994","Kerrigan Mechanical"],["995","LG Safety"],["996","McElhinney Plaster"],["997","Munster Joinery"],["998","Top Grade Roofing"],["999","Usher Insulation"],["1094","BSS Agency Staff"],["1095","O’Neill & Brennan"]],
+    "173": [["none","No Subcontractor"],["953","Ancove"],["954","B-Space – Kitchen & Wardrobe"],["955","Carroll Joinery"],["956","Concept Colour"],["957","Greenlight Plumbing"],["958","JPP Insulation"],["959","Jason Royal (Electrical)"],["960","LG Safety"],["961","Monster Joinery"],["962","O'Connor Plumbing"],["963","Ronan (Block Laying)"],["964","SC Carpentry"],["965","Slabbing & Skimming – Paul McElhinney"],["1090","BSS Agency Staff"],["1091","O’Neill & Brennan"]],
+    "174": [["none","No Subcontractor"],["379","Allen Cranes"],["380","Ancove Groundworks"],["381","Be-Space Kitchens"],["382","Bridgewood Carpentry"],["383","Brady Slipform"],["384","BSS Agency Staff"],["385","Captain Clean"],["386","Circet Ireland"],["387","Concept Colours"],["388","Coral Plant"],["389","D&C Paving"],["390","E&M Tiling"],["391","Greenlight Electrical"],["392","H&M Ironworks"],["393","Havern Bricklaying"],["394","Holton Gutters"],["395","JOL Electrical"],["396","JPP Insulation"],["397","Kerr Electrical"],["398","Langan Mastics"],["399","LG Safety"],["400","Mason Landscapes"],["401","MBM Core Drilling"],["402","McBreen Environmental"],["403","McElwain Scaffolding"],["404","McIlhenny Plastering"],["405","O’Connors Heating & Plumbing"],["406","O’Neill & Brennan"],["407","Pat Brannigan Carpentry"],["408","RPS Power Washing"],["409","Suir Electrical"],["410","Tom Brady Roofing"],["1010","Enuzum"],["1015","Holemasters"],["1028","HP Roofing"],["1040","NorDan"],["1041","Redlough"],["1102","Coolcat"]],
+    "175": [["none","No Subcontractor"],["379","Allen Cranes"],["380","Ancove Groundworks"],["381","Be-Space Kitchens"],["382","Bridgewood Carpentry"],["383","Brady Slipform"],["384","BSS Agency Staff"],["385","Captain Clean"],["386","Circet Ireland"],["387","Concept Colours"],["388","Coral Plant"],["389","D&C Paving"],["390","E&M Tiling"],["391","Greenlight Electrical"],["392","H&M Ironworks"],["393","Havern Bricklaying"],["394","Holton Gutters"],["395","JOL Electrical"],["396","JPP Insulation"],["397","Kerr Electrical"],["398","Langan Mastics"],["399","LG Safety"],["400","Mason Landscapes"],["401","MBM Core Drilling"],["402","McBreen Environmental"],["403","McElwain Scaffolding"],["404","McIlhenny Plastering"],["405","O’Connors Heating & Plumbing"],["406","O’Neill & Brennan"],["407","Pat Brannigan Carpentry"],["408","RPS Power Washing"],["409","Suir Electrical"],["410","Tom Brady Roofing"],["1010","Enuzum"],["1015","Holemasters"],["1028","HP Roofing"],["1040","NorDan"],["1041","Redlough"],["1102","Coolcat"]],
+    "176": [["none","No Subcontractor"],["944","Bespace"],["945","Concept Colours"],["946","Declan Cummins"],["947","Hamill Carpentry"],["948","LG Safety"],["949","SDES Electrical"],["950","Sean Glennon Groundworks"],["951","Usher Insulations"],["1088","BSS Agency Staff"],["1089","O’Neill & Brennan"]]
+  },
+  "submit_label": "Register & Continue"
+}
